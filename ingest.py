@@ -1,93 +1,72 @@
+"""
+ingest.py — Промышленный CLI-скрипт индексации базы документов для Enterprise RAG 2.0.
+Использует единый с ядром пайплайн DocumentIngestionPipeline и модель nomic-embed-text-v1.5 (768-D).
+"""
+from __future__ import annotations
+
 import os
 import sys
+import logging
 from pathlib import Path
 
-# Настройка кодировки для корректного вывода в терминале Windows
+# Настройка UTF-8 для консоли Windows
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
-DATA_DIR = Path("data")
-CHROMA_DIR = "./chroma_db"
-# Модель для эмбеддингов: для текстов на русском отлично подходит мультиязычная модель
-# Она понимает и русский, и английский язык
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-# Запасной вариант (только английский, чуть быстрее): "all-MiniLM-L6-v2"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("IngestCLI")
 
-def load_documents(data_path: Path):
-    """Загрузка документов (PDF и TXT) из папки data и её подпапок."""
-    documents = []
-    
-    if not data_path.exists():
-        print(f"Папка {data_path} не найдена!")
-        return documents
+from rag_engine import (
+    DocumentIngestionPipeline,
+    AppConfig,
+    EmbeddingDimensionMismatchError,
+    CONFIG
+)
 
-    # Рекурсивный поиск всех PDF и TXT файлов
-    files = list(data_path.rglob("*.pdf")) + list(data_path.rglob("*.txt"))
-    print(f"Найдено файлов для индексации: {len(files)}")
-    
-    for file_path in files:
-        try:
-            print(f"  Чтение: {file_path.relative_to(data_path)}")
-            if file_path.suffix.lower() == ".pdf":
-                loader = PyPDFLoader(str(file_path))
-            else:
-                loader = TextLoader(str(file_path), encoding="utf-8")
-            
-            docs = loader.load()
-            # Добавим относительный путь в метаданные для удобства ссылок на источники
-            for d in docs:
-                d.metadata["source"] = str(file_path.relative_to(data_path.parent))
-            documents.extend(docs)
-        except Exception as e:
-            print(f"  Ошибка при чтении {file_path}: {e}")
-            
-    return documents
 
-def main():
-    print("=== [1/4] Загрузка документов ===")
-    documents = load_documents(DATA_DIR)
-    
-    if not documents:
-        print("Документы не найдены. Поместите PDF или TXT файлы в папку data/.")
-        return
+def run_ingestion(data_dir: str = "data", output_file: str = "rag_index.json"):
+    """
+    Запуск индексации директории документов с гарантией размерности 768-D.
+    """
+    print("=" * 70)
+    print(" 🚀 Enterprise RAG 2.0 — Индексация документов (Nomic v1.5 strictly 768-D)")
+    print("=" * 70)
 
-    print(f"Всего загружено страниц/документов: {len(documents)}")
+    config = AppConfig.from_env()
+    config.data_dir = data_dir
+    config.index_file = output_file
 
-    print("\n=== [2/4] Разделение на фрагменты (чанки) ===")
-    # chunk_size: размер фрагмента в символах
-    # chunk_overlap: перекрытие между соседними фрагментами для сохранения контекста
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        separators=["\n\n", "\n", " ", ""]
-    )
-    chunks = text_splitter.split_documents(documents)
-    print(f"Создано фрагментов текста: {len(chunks)}")
+    print(f"[*] Режим окружения: {config.environment}")
+    print(f"[*] Модель эмбеддингов: {config.embedding_model} (768-D)")
+    print(f"[*] Провайдер эмбеддингов: {config.embedding_provider} (Устройство: {config.embedding_device})")
+    print(f"[*] Каталог исходных данных: {Path(config.data_dir).resolve()}")
+    print(f"[*] Целевой файл индекса: {Path(config.index_file).resolve()}")
+    print("-" * 70)
 
-    print(f"\n=== [3/4] Инициализация модели эмбеддингов ({EMBEDDING_MODEL}) ===")
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs={"device": "cpu"}  # или "cuda" при наличии видеокарты NVIDIA
-    )
+    pipeline = DocumentIngestionPipeline(config=config)
+    try:
+        count = pipeline.index_directory(config.data_dir, output_file=config.index_file)
+        print("-" * 70)
+        print(f"✅ [SUCCESS] Индексация завершена успешно! Всего чанков в индексе: {count}")
+        print(f"[*] Файл индекса сохранен: {config.index_file}")
+        return count
+    except EmbeddingDimensionMismatchError as dim_err:
+        logger.critical(f"❌ [CRITICAL DIMENSION ERROR] {dim_err}")
+        sys.exit(1)
+    except Exception as exc:
+        logger.exception(f"❌ [ERROR] Ошибка в процессе индексации: {exc}")
+        sys.exit(1)
 
-    print(f"\n=== [4/4] Сохранение векторов в базу ChromaDB ({CHROMA_DIR}) ===")
-    # Создаем и сохраняем базу данных
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory=CHROMA_DIR
-    )
-    
-    print("\n✅ Готово! Векторная база данных успешно сформирована.")
-    print("Теперь можно запускать скрипт для общения с ИИ: python rag_chat.py")
 
 if __name__ == "__main__":
-    main()
+    target_data = sys.argv[1] if len(sys.argv) > 1 else "data"
+    target_index = sys.argv[2] if len(sys.argv) > 2 else "rag_index.json"
+    run_ingestion(target_data, target_index)
