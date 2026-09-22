@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  # =================================================================
+  # 1. Сервис инференса моделей (Ollama Server с поддержкой NVIDIA GPU)
+  # =================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_backend
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_FLASH_ATTENTION=1
+    # Проброс всех доступных GPU NVIDIA через Container Toolkit
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - rag_network
+
+  # =================================================================
+  # 2. Опциональный веб-интерфейс чата (Open WebUI)
+  # =================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open_webui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=rag-secret-token-1468
+    depends_on:
+      - ollama
+    networks:
+      - rag_network
+
+volumes:
+  ollama_models:
+    name: ollama_models_storage
+  open_webui_data:
+    name: open_webui_storage
+
+networks:
+  rag_network:
+    name: rag_isolated_net
+    driver: bridge

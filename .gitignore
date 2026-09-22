@@ -1,0 +1,41 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local Environment Variables & Secrets
+.env
+.env.lmstudio
+.env.ollama
+.env.docker
+*.local
+*.lock
+
+# RAG Large Storage & Vector Index (generated locally)
+rag_index.json
+*.json.bak
+
+# Knowledge Base Raw Data & Scraped Files
+data/*
+!data/.gitkeep
+pdf saver/
+scratch/
+
+# Logs & Temporary Files
+logs/
+*.log
+*.tmp
+
+# System & IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
