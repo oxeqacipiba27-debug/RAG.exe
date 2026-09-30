@@ -29,9 +29,15 @@ class SessionManager:
         self._lock = threading.Lock()
         self._memory_cache: Dict[str, List[Dict[str, str]]] = {}
         self._session_ids: Dict[str, str] = {}
+        self._persistent_conn: Optional[sqlite3.Connection] = None
+        if self.db_path == ":memory:":
+            self._persistent_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._persistent_conn.row_factory = sqlite3.Row
         self._init_sqlite()
 
     def _get_connection(self) -> sqlite3.Connection:
+        if self._persistent_conn is not None:
+            return self._persistent_conn
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn

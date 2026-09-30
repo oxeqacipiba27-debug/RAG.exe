@@ -1,0 +1,24 @@
+post_install() {
+    echo ":: EXSCIO 2.0 успешно установлен в /opt/exscio."
+    echo ":: Для инициализации виртуального окружения Python перейдите в каталог:"
+    echo "   cd /opt/exscio && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt"
+    echo ":: Для запуска десктопного приложения используйте команду: exscio"
+    echo ":: Для запуска FastAPI сервера: exscio-api"
+    echo ":: Для выбора бэкенда (LM Studio / Ollama / Docker): exscio-switch"
+    echo ":: Для автозапуска через systemd:"
+    echo "   systemctl --user enable --now exscio-api.service"
+
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+}

@@ -6,12 +6,19 @@ and authentication middleware using Python's standard unittest.
 """
 
 import os
+import sys
 import json
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from starlette.testclient import TestClient
 
 from api.app import create_app
@@ -228,6 +235,55 @@ class TestRAGApiServer(unittest.TestCase):
             )
             self.assertEqual(resp_ok_bearer.status_code, 200)
 
+    def test_web_chat_message(self):
+        """Test POST /api/v1/chat/message with WebChatMessageRequest (decoupled from Telegram)."""
+        payload = {
+            "query": "Как работает библиотека?",
+            "session_id": "web_test_12345"
+        }
+        response = self.client.post("/api/v1/chat/message", json=payload)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("answer", data)
+        self.assertIn("Echo: Как работает библиотека?", data["answer"])
+        self.assertEqual(data["session_id"], "web_test_12345")
+        self.assertIsInstance(data["sources"], list)
+
+    def test_web_chat_stream(self):
+        """Test POST /api/v1/chat/stream with WebChatMessageRequest."""
+        payload = {
+            "query": "Вопрос для веб-стриминга",
+            "session_id": "web_stream_test"
+        }
+        response = self.client.post("/api/v1/chat/stream", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/event-stream", response.headers.get("content-type", ""))
+        self.assertIn("data:", response.text)
+
+    def test_web_chat_reset(self):
+        """Test POST /api/v1/chat/reset for web sessions."""
+        sess_id = "web_to_reset"
+        self.client.post("/api/v1/chat/message", json={"query": "Тест", "session_id": sess_id})
+        self.assertGreater(len(self.session_mgr.get_history(sess_id)), 0)
+
+        resp = self.client.post("/api/v1/chat/reset", json={"session_id": sess_id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "ok")
+        self.assertEqual(len(self.session_mgr.get_history(sess_id)), 0)
+
+    def test_widget_assets(self):
+        """Test GET /widget.js and GET /widget endpoints."""
+        js_resp = self.client.get("/widget.js")
+        self.assertEqual(js_resp.status_code, 200)
+        self.assertIn("application/javascript", js_resp.headers.get("content-type", ""))
+        self.assertIn("rag-widget-container", js_resp.text)
+
+        html_resp = self.client.get("/widget")
+        self.assertEqual(html_resp.status_code, 200)
+        self.assertIn("text/html", html_resp.headers.get("content-type", ""))
+        self.assertIn("Школа № 1468", html_resp.text)
+
 
 if __name__ == "__main__":
     unittest.main()
+

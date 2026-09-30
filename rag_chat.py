@@ -1,5 +1,5 @@
 """
-rag_chat.py — Консольный интерактивный чат с базой знаний на базе Enterprise RAG 2.0.
+rag_chat.py — Консольный интерактивный чат с базой знаний на базе EXSCIO 2.0.
 Использует RAGPipeline (гибридный поиск BM25 + Nomic 768-D + LLM Qwen2.5-14B).
 """
 import os
@@ -22,7 +22,7 @@ from rag_engine import RAGPipeline, AppConfig
 
 def main():
     print("=" * 65)
-    print(" 🚀 Enterprise RAG 2.0 — Интерактивный терминальный консультант")
+    print(" 🚀 EXSCIO 2.0 — Интерактивный терминальный консультант")
     print("=" * 65)
 
     config = AppConfig.from_env()

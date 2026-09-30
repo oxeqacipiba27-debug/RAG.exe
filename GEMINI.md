@@ -1,9 +1,9 @@
-# Project Rules & Architecture Standards (Enterprise RAG)
+# Project Rules & Architecture Standards (EXSCIO)
 
 ## 1. LM Studio CLI Context & VRAM Management
 - **Правило**: При загрузке моделей через LM Studio CLI (`lms load`) ВСЕГДА явно указывать контекстное окно `-c 8192` и флаг `--gpu max -y`.
 - **Обоснование**: Модели с расширенным контекстом (напр. `qwen2.5-14b-instruct-1m`) по умолчанию пытаются зарезервировать KV-кэш на 1 000 000 токенов (требуется ~100 ГБ RAM/VRAM), что вызывает отказ `insufficient system resources`. С флагом `-c 8192` модель занимает ~8.5 ГБ VRAM и работает стабильно.
-- **Жизненный цикл**: Модели выгружаются из GPU при закрытии RAG Studio через `lms unload --all`.
+- **Жизненный цикл**: Модели выгружаются из GPU при закрытии EXSCIO через `lms unload --all`.
 
 ---
 

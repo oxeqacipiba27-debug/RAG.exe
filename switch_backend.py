@@ -77,7 +77,7 @@ def switch_to(profile_key: str) -> bool:
 
 def interactive_menu():
     print("=" * 65)
-    print("       МЕНЮ ПЕРЕКЛЮЧЕНИЯ БЭКЕНДА ENTERPRISE RAG")
+    print("       МЕНЮ ПЕРЕКЛЮЧЕНИЯ БЭКЕНДА EXSCIO")
     print("=" * 65)
     print(f"  Текущий активный бэкенд: [{get_current_backend()}]")
     print("-" * 65)
@@ -107,7 +107,7 @@ def interactive_menu():
         test_docker()
     elif choice == "5":
         import subprocess
-        print("\n[i] Запуск приложения Enterprise RAG...")
+        print("\n[i] Запуск приложения EXSCIO...")
         subprocess.run([sys.executable, str(ROOT_DIR / "run_app.py")])
     elif choice == "0":
         print("Отмена.")

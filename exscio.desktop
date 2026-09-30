@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=EXSCIO
+GenericName=Enterprise RAG AI Assistant
+Comment=Autonomous Enterprise RAG System with local LLM and vector search
+Exec=/opt/exscio/start.sh
+Icon=exscio
+Path=/opt/exscio
+Terminal=false
+Categories=Office;Development;ArtificialIntelligence;Utility;
+Keywords=AI;RAG;LLM;Search;Ollama;LMStudio;
+StartupNotify=true
+StartupWMClass=EXSCIO

@@ -19,6 +19,13 @@ class TelegramMessageRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Опциональный внешний UUID сессии")
 
 
+class WebChatMessageRequest(BaseModel):
+    """Универсальное тело запроса от веб-сайта, виджета или мобильного приложения."""
+    query: str = Field(..., min_length=1, description="Текст вопроса пользователя")
+    session_id: Optional[str] = Field(None, description="ID сессии диалога (хранится в localStorage)")
+    user_id: Optional[str] = Field(None, description="Идентификатор пользователя на сайте")
+
+
 class SourceCitation(BaseModel):
     """Информация о первоисточнике (документ, страница, цитата)."""
     source: str = Field(..., description="Название документа или первоисточника")

@@ -1,0 +1,15 @@
+[Unit]
+Description=EXSCIO Enterprise RAG FastAPI Server
+Documentation=https://github.com/exscio/exscio
+After=network.target ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/exscio
+ExecStart=/opt/exscio/start_api.sh
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

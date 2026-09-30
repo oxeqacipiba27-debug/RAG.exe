@@ -24,6 +24,8 @@ from openai import OpenAI
 
 DOCKER_CANDIDATE_PATHS = [
     "docker",
+    "/usr/bin/docker",
+    "/usr/local/bin/docker",
     r"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
     os.path.expandvars(r"%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin\docker.exe")
 ]
@@ -121,20 +123,29 @@ def test_docker():
     docker_bin = find_docker_bin()
     if not docker_bin:
         print("  Docker CLI       : 🔴 Не найден в PATH или стандартных директориях.")
-        print("  Рекомендация     : Убедитесь, что Docker Desktop установлен.")
+        print("  Рекомендация     : На Arch Linux выполните: sudo pacman -S docker docker-compose")
         return False
 
     print(f"  Docker CLI       : 🟢 Найден ({docker_bin})")
 
-    # Быстрая проверка наличия WSL2 в Windows
-    wsl_bin = shutil.which("wsl") or shutil.which("wsl.exe")
-    if wsl_bin:
+    # Проверка WSL2 только в среде Windows
+    if sys.platform == "win32":
+        wsl_bin = shutil.which("wsl") or shutil.which("wsl.exe")
+        if wsl_bin:
+            try:
+                res_wsl = subprocess.run([wsl_bin, "-l", "-q"], capture_output=True, text=True, timeout=2)
+                if res_wsl.returncode != 0 or "not installed" in res_wsl.stderr.lower():
+                    print("  Docker Daemon    : 🟡 Docker установлен, но в Windows отсутствует WSL2.")
+                    print("  Рекомендация     : Для работы Docker Engine выполните в терминале Администратора: wsl --install")
+                    return False
+            except Exception:
+                pass
+    elif shutil.which("systemctl"):
         try:
-            res_wsl = subprocess.run([wsl_bin, "-l", "-q"], capture_output=True, text=True, timeout=2)
-            if res_wsl.returncode != 0 or "not installed" in res_wsl.stderr.lower():
-                print("  Docker Daemon    : 🟡 Docker установлен, но в Windows отсутствует WSL2.")
-                print("  Рекомендация     : Для работы Docker Engine выполните в терминале Администратора: wsl --install")
-                return False
+            res_svc = subprocess.run(["systemctl", "is-active", "--quiet", "docker"], capture_output=True, timeout=2)
+            if res_svc.returncode != 0:
+                print("  Docker Service   : 🟡 Служба docker.service не активна.")
+                print("  Рекомендация     : Запустите службу: sudo systemctl start docker")
         except Exception:
             pass
 
@@ -152,7 +163,7 @@ def test_docker():
             print(f"  Docker Daemon    : 🟡 Установлен, но движок остановлен или стартует.")
             return False
     except subprocess.TimeoutExpired:
-        print("  Docker Daemon    : 🟡 Таймаут опроса. Движок Docker Desktop ожидает инициализации WSL2.")
+        print("  Docker Daemon    : 🟡 Таймаут опроса демона Docker.")
         return False
     except Exception as e:
         print(f"  Docker Daemon    : 🔴 Ошибка опроса: {e}")
@@ -160,9 +171,13 @@ def test_docker():
 
 
 if __name__ == "__main__":
+    import server_manager
     print("╔═══════════════════════════════════════════════════════════════╗")
     print("║     RAG BACKENDS HEALTH DIAGNOSTICS & STATUS MONITOR          ║")
     print("╚═══════════════════════════════════════════════════════════════╝")
+    print(f"  Платформа: {sys.platform.upper()} (Arch Linux / POSIX compatible)")
+    print(f"  Аппаратное ускорение: {server_manager.get_gpu_summary()}")
+
     lm_ok = test_lm_studio()
     ol_ok = test_ollama_native()
     dk_ok = test_docker()

@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from typing import AsyncGenerator, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -19,6 +20,7 @@ from api.schemas import (
     SourceCitation,
     TelegramMessageRequest,
     TelegramMessageResponse,
+    WebChatMessageRequest,
 )
 from api.session_manager import SessionManager
 from rag_engine import (
@@ -181,6 +183,26 @@ async def process_telegram_message(
     )
 
 
+@router.post("/chat/message", response_model=TelegramMessageResponse, dependencies=[Depends(verify_api_key)])
+async def process_web_chat_message(
+    payload: WebChatMessageRequest,
+    pipeline: RAGPipeline = Depends(get_pipeline),
+    session_mgr: SessionManager = Depends(get_session_manager)
+):
+    """Универсальный эндпоинт для веб-сайтов, виджетов и внешних frontend-приложений.
+    
+    Не требует Telegram chat_id/user_id. Автоматически создает или привязывает session_id.
+    """
+    session_id = payload.session_id.strip() if payload.session_id else f"web_{uuid.uuid4().hex[:12]}"
+    tg_req = TelegramMessageRequest(
+        chat_id=session_id,
+        user_id=payload.user_id or "web_user",
+        query=payload.query,
+        session_id=session_id
+    )
+    return await process_telegram_message(payload=tg_req, pipeline=pipeline, session_mgr=session_mgr)
+
+
 # ==============================================================================
 # Streaming Endpoint (Server-Sent Events)
 # ==============================================================================
@@ -298,9 +320,40 @@ async def stream_telegram_message(
     return StreamingResponse(sse_event_generator(), media_type="text/event-stream")
 
 
+@router.post("/chat/stream", dependencies=[Depends(verify_api_key)])
+async def stream_web_chat_message(
+    payload: WebChatMessageRequest,
+    pipeline: RAGPipeline = Depends(get_pipeline),
+    session_mgr: SessionManager = Depends(get_session_manager)
+):
+    """Потоковая передача ответа через Server-Sent Events (SSE) для веб-виджетов и фронтендов."""
+    session_id = payload.session_id.strip() if payload.session_id else f"web_{uuid.uuid4().hex[:12]}"
+    tg_req = TelegramMessageRequest(
+        chat_id=session_id,
+        user_id=payload.user_id or "web_user",
+        query=payload.query,
+        session_id=session_id
+    )
+    return await stream_telegram_message(payload=tg_req, pipeline=pipeline, session_mgr=session_mgr)
+
+
 # ==============================================================================
 # Session Management Endpoints
 # ==============================================================================
+
+@router.post("/chat/reset", response_model=SessionResetResponse, dependencies=[Depends(verify_api_key)])
+async def reset_web_session(
+    payload: Optional[Dict[str, str]] = None,
+    session_mgr: SessionManager = Depends(get_session_manager)
+):
+    """Универсальный сброс сессии для веб-виджетов."""
+    session_id = (payload or {}).get("session_id", "default_web")
+    session_mgr.reset_session(session_id)
+    return SessionResetResponse(
+        status="ok",
+        message="Контекст диалога успешно сброшен. Начата новая тема.",
+        chat_id=session_id
+    )
 
 @router.post("/chat/sessions/{chat_id}/reset", response_model=SessionResetResponse, dependencies=[Depends(verify_api_key)])
 async def reset_chat_session(

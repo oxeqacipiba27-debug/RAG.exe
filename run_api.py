@@ -47,7 +47,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 65)
-    print(" 🚀 Запуск Enterprise RAG 2.0 API Server")
+    print(" 🚀 Запуск EXSCIO 2.0 API Server")
     print(f" 📡 Адрес: http://{args.host}:{args.port}")
     print(f" 📖 Документация Swagger: http://localhost:{args.port}/docs")
     print("=" * 65)

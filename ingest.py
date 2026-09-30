@@ -1,5 +1,5 @@
 """
-ingest.py — Промышленный CLI-скрипт индексации базы документов для Enterprise RAG 2.0.
+ingest.py — Промышленный CLI-скрипт индексации базы документов для EXSCIO 2.0.
 Использует единый с ядром пайплайн DocumentIngestionPipeline и модель nomic-embed-text-v1.5 (768-D).
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ def run_ingestion(data_dir: str = "data", output_file: str = "rag_index.json"):
     Запуск индексации директории документов с гарантией размерности 768-D.
     """
     print("=" * 70)
-    print(" 🚀 Enterprise RAG 2.0 — Индексация документов (Nomic v1.5 strictly 768-D)")
+    print(" 🚀 EXSCIO 2.0 — Индексация документов (Nomic v1.5 strictly 768-D)")
     print("=" * 70)
 
     config = AppConfig.from_env()

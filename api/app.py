@@ -4,9 +4,12 @@ schoolX/api/app.py — Главное приложение FastAPI для Enterp
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from api.middleware import RequestLoggingMiddleware
 from api.routes import router as api_router
@@ -88,8 +91,29 @@ def create_app(
     # Middleware логирования
     app.add_middleware(RequestLoggingMiddleware)
 
-    # Подключение роутов
+    # Подключение роутов API
     app.include_router(api_router)
+
+    # Статические файлы и веб-виджет
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.get("/widget.js", tags=["Widget"])
+    async def get_widget_js():
+        """Возвращает встраиваемый JavaScript-файл чат-виджета для сайтов."""
+        widget_file = static_dir / "widget.js"
+        if widget_file.exists():
+            return FileResponse(widget_file, media_type="application/javascript")
+        raise HTTPException(status_code=404, detail="Файл виджета widget.js не найден.")
+
+    @app.get("/widget", tags=["Widget"], response_class=HTMLResponse)
+    async def get_widget_demo():
+        """Демонстрационная страница встраивания чат-виджета."""
+        demo_file = static_dir / "widget_demo.html"
+        if demo_file.exists():
+            return FileResponse(demo_file, media_type="text/html")
+        return HTMLResponse("<h2>SchoolX RAG Web Widget Demo</h2><p>Файл демо-страницы не найден.</p>")
 
     # Прямой алиас /health на верхнем уровне
     @app.get("/health", tags=["System"])

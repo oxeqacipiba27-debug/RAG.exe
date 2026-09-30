@@ -14,7 +14,7 @@ if sys.platform == "win32":
         pass
 
 print("=" * 60)
-print("  ТЕСТИРОВАНИЕ АВТОНОМНОГО КОРПОРАТИВНОГО RAG")
+print("  ТЕСТИРОВАНИЕ АВТОНОМНОГО КОМПЛЕКСА EXSCIO")
 print("=" * 60)
 
 # 1. Проверка модулей
@@ -75,7 +75,8 @@ print("  [✓] Сквозной RAG-ответ получен корректно
 
 # 5. Проверка файлов презентации и запуска
 print("\n[5/5] Проверка файлов поставки продукта...")
-required_files = ["rag_gui.py", "server_manager.py", "run_app.py", "start_rag.bat", "PRODUCT_MANUAL.md", "rag_index.json"]
+launcher = "start_rag.sh" if Path("start_rag.sh").exists() else "start_rag.bat"
+required_files = ["rag_gui.py", "server_manager.py", "run_app.py", launcher, "PRODUCT_MANUAL.md", "rag_index.json"]
 for rf in required_files:
     assert Path(rf).exists(), f"Файл {rf} должен существовать!"
     print(f"  [✓] {rf} присутствует.")

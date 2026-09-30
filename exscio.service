@@ -1,0 +1,17 @@
+[Unit]
+Description=EXSCIO Enterprise RAG Desktop UI Service
+Documentation=https://github.com/exscio/exscio
+After=network.target ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/exscio
+ExecStart=/opt/exscio/start.sh --headless
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=STREAMLIT_SERVER_HEADLESS=true
+Environment=STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+[Install]
+WantedBy=default.target

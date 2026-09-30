@@ -868,7 +868,7 @@ class DenseVectorStore:
                 self.resolved_device = "cpu"
 
             logger.info(f"Загрузка SentenceTransformer {self.st_model_name} на {self.resolved_device}...")
-            self.st_model = SentenceTransformer(self.st_model_name, device=self.resolved_device)
+            self.st_model = SentenceTransformer(self.st_model_name, device=self.resolved_device, trust_remote_code=True)
             logger.info("SentenceTransformer успешно загружен.")
         except Exception as e:
             logger.error(f"Не удалось инициализировать SentenceTransformer: {e}")
@@ -1977,7 +1977,7 @@ class RAGPipeline:
 
 if __name__ == "__main__":
     print("=" * 75)
-    print("  ENTERPRISE RAG — МОДУЛЬНОЕ ПРОИЗВОДСТВЕННОЕ ЯДРО")
+    print("  EXSCIO — МОДУЛЬНОЕ ПРОИЗВОДСТВЕННОЕ ЯДРО")
     print("=" * 75)
     print(f"  • Провайдер генерации (LLM)   : {CONFIG.llm_provider}")
     print(f"  • Базовый URL LLM             : {CONFIG.llm_base_url}")
