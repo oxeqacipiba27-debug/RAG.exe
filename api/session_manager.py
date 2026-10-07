@@ -1,5 +1,5 @@
 """
-schoolX/api/session_manager.py — Потокобезопасный менеджер сессий и истории диалогов.
+api/session_manager.py — Потокобезопасный менеджер сессий и истории диалогов.
 Хранит контекст бесед в SQLite базе данных (data/sessions.db) с in-memory кэшированием.
 """
 
@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 import logging
@@ -29,12 +30,35 @@ class SessionManager:
         self._lock = threading.Lock()
         self._memory_cache: Dict[str, List[Dict[str, str]]] = {}
         self._session_ids: Dict[str, str] = {}
+        self._persistent_conn: Optional[sqlite3.Connection] = None
+        if self.db_path == ":memory:":
+            self._persistent_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._persistent_conn.row_factory = sqlite3.Row
         self._init_sqlite()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _get_connection(self):
+        if self._persistent_conn is not None:
+            with self._persistent_conn as conn:
+                yield conn
+            return
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def close(self) -> None:
+        """Закрывает персистентное соединение (если используется)."""
+        with self._lock:
+            if self._persistent_conn is not None:
+                try:
+                    self._persistent_conn.close()
+                except Exception:
+                    pass
+                self._persistent_conn = None
 
     def _init_sqlite(self) -> None:
         """Инициализация таблиц для персистентного хранения сессий и сообщений."""

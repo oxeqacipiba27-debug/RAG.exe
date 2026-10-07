@@ -1,5 +1,5 @@
 """
-rag_gui.py — Графический интерфейс локальной RAG-системы Enterprise RAG.
+rag_gui.py — Графический интерфейс локальной RAG-системы EXSCIO.
 Интегрирован с ядром rag_engine.py:
 - Фирменный темный стиль (Neon Accents, Glassmorphism, Dark Surface).
 - Строгая изоляция экранов: Системная инструкция агента доступна ТОЛЬКО в разделе Preferences.
@@ -14,6 +14,16 @@ from __future__ import annotations
 
 import os
 import sys
+
+if sys.platform == "win32":
+    try:
+        if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import json
 import re
 import time
@@ -98,14 +108,14 @@ DATA_DIR = Path("data")
 
 # Конфигурация страницы
 st.set_page_config(
-    page_title="Корпоративная студия RAG",
-    page_icon="⚛️",
+    page_title="EXSCIO — знания в ваших документах",
+    page_icon="static/favicon.svg",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # =====================================================================
-# Фирменные стили интерфейса (Dark Theme + Cosmic Gradient)
+# Фирменные стили интерфейса EXSCIO (Cosmic Purple + Lavender Design System)
 # =====================================================================
 APP_CSS = """
 <style>
@@ -126,35 +136,45 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
 [data-testid="stSidebarCollapseButton"] {
     visibility: visible !important;
     display: flex !important;
-    color: var(--agy-text) !important;
-    background: var(--agy-surface) !important;
+    color: var(--text) !important;
+    background: var(--surface2) !important;
     border-radius: 8px !important;
-    border: 1px solid var(--agy-border) !important;
+    border: 1px solid var(--line) !important;
 }
 
-/* Корневые цвета темы */
+/* Дизайн-система EXSCIO (Source of Truth: https://mcloly.ru/) */
 :root {
-    --agy-bg: #0d1117;
-    --agy-surface: #161b22;
-    --agy-card: #21262d;
-    --agy-border: #30363d;
-    --agy-border-active: #58a6ff;
-    --agy-text: #f0f6fc;
-    --agy-text-muted: #8b949e;
-    --agy-accent-purple: #7928ca;
-    --agy-accent-blue: #4f46e5;
-    --agy-accent-cyan: #06b6d4;
-    --agy-gradient: linear-gradient(135deg, #7928ca 0%, #4f46e5 50%, #06b6d4 100%);
+    --bg: #100c1b;
+    --surface: #1a1427;
+    --surface2: #221a31;
+    --surface-hover: #332340;
+    --line: #382a49;
+    --line-active: #51415e;
+    --line-focus: #634379;
+    --text: #f6effa;
+    --text-muted: #b7aac8;
+    --accent: #c792ff;
+    --accent-btn: #c58af6;
+    --accent-btn-hover: #dbb1ff;
+    --btn-text: #1c0b2c;
+    --pink: #f286cf;
+    --danger: #ffabb7;
+    --danger-bg: #452436;
+    --danger-line: #6b334f;
+    --good: #b6e5c9;
+    --good-bg: #21372e;
+    --good-line: #365344;
+    --gradient: linear-gradient(135deg, #c792ff 0%, #f286cf 100%);
     --chat-max-width: 860px;
     --chat-quarter-width: calc(var(--chat-max-width) * 0.25);
 }
 
 /* Фон приложения */
 .stApp {
-    background-color: var(--agy-bg);
-    color: var(--agy-text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    overflow-x: hidden;
+    background-color: var(--bg) !important;
+    color: var(--text) !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+    overflow-x: hidden !important;
 }
 
 /* Центрирование основного содержимого на всех масштабах и разрешениях */
@@ -181,10 +201,47 @@ section.main,
     box-sizing: border-box !important;
 }
 
-/* Боковая панель */
-section[data-testid="stSidebar"] {
-    background-color: var(--agy-surface);
-    border-right: 1px solid var(--agy-border);
+/* Боковая панель: 2 фиксированных размера (раскрытый 340px с полной видимостью текста без артефактов '...', и скрытый) */
+section[data-testid="stSidebar"],
+[data-testid="stSidebar"] {
+    min-width: 340px !important;
+    max-width: 340px !important;
+    width: 340px !important;
+    background-color: var(--surface) !important;
+    border-right: 1px solid var(--line) !important;
+}
+
+.stSidebar .stButton button {
+    white-space: nowrap !important;
+    font-size: 13px !important;
+    padding: 8px 12px !important;
+}
+
+/* Фирменная плашка-кикер (.tag как на mcloly.ru) */
+.tag {
+    font-size: 0.78rem !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    color: var(--accent) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin-bottom: 8px !important;
+    font-weight: 600 !important;
+}
+.tag::before {
+    content: '' !important;
+    display: inline-block !important;
+    width: 22px !important;
+    height: 1px !important;
+    background: var(--accent) !important;
+}
+
+/* Заголовки */
+h1, h2, h3, h4 {
+    color: var(--text) !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em !important;
 }
 
 /* Кастомный тонкий скроллбар */
@@ -193,14 +250,14 @@ section[data-testid="stSidebar"] {
     height: 6px;
 }
 ::-webkit-scrollbar-track {
-    background: var(--agy-bg);
+    background: var(--bg);
 }
 ::-webkit-scrollbar-thumb {
-    background: var(--agy-border);
+    background: var(--line);
     border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: #484f58;
+    background: var(--line-focus);
 }
 
 /* Шапка чата */
@@ -217,78 +274,80 @@ section[data-testid="stSidebar"] {
     padding: 0;
     font-size: clamp(20px, 4vw, 26px);
     font-weight: 700;
-    color: #f0f6fc;
+    color: var(--text);
 }
 .chat-header-stat {
     font-size: 12px;
-    color: #8b949e;
+    color: var(--text-muted);
     white-space: nowrap;
 }
 
 /* Карточки сообщений */
 .chat-bubble-user {
-    background: #1c2128;
-    border: 1px solid var(--agy-border);
-    border-radius: 12px;
-    padding: 16px 20px;
-    margin-bottom: 14px;
-    color: var(--agy-text);
-    word-break: break-word;
-    overflow-wrap: break-word;
+    background: #2e213a !important;
+    border: 1px solid var(--line-active) !important;
+    border-radius: 14px 14px 2px 14px !important;
+    padding: 16px 20px !important;
+    margin-bottom: 14px !important;
+    color: var(--text) !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25) !important;
 }
 
 .chat-bubble-assistant {
-    background: rgba(22, 27, 34, 0.95);
-    border: 1px solid rgba(88, 166, 255, 0.25);
-    border-radius: 12px;
-    padding: 18px 22px;
-    margin-bottom: 14px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    word-break: break-word;
-    overflow-wrap: break-word;
+    background: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 14px 14px 14px 2px !important;
+    padding: 18px 22px !important;
+    margin-bottom: 14px !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
 }
 
 /* Блок цепочки рассуждений (Reasoning Step) */
 .reasoning-step {
-    background: #13171e;
-    border-left: 3px solid #7928ca;
-    padding: 8px 14px;
-    margin-bottom: 12px;
-    border-radius: 0 8px 8px 0;
-    font-size: 12px;
-    color: var(--agy-text-muted);
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    word-break: break-word;
-    overflow-wrap: break-word;
+    background: var(--surface2) !important;
+    border-left: 3px solid var(--accent) !important;
+    padding: 8px 14px !important;
+    margin-bottom: 12px !important;
+    border-radius: 0 8px 8px 0 !important;
+    font-size: 12px !important;
+    color: var(--text-muted) !important;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
 }
 
 /* Карточки архитектуры и демонстрации */
 .arch-card {
-    background: #161b22;
-    border: 1px solid var(--agy-border);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 16px;
-    transition: all 0.2s ease-in-out;
+    background: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 14px !important;
+    padding: 22px !important;
+    margin-bottom: 16px !important;
+    transition: all 0.2s ease-in-out !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
 }
 .arch-card:hover {
-    border-color: #58a6ff;
-    box-shadow: 0 4px 20px rgba(88, 166, 255, 0.1);
+    border-color: var(--line-active) !important;
+    box-shadow: 0 4px 24px rgba(199, 146, 255, 0.12) !important;
 }
 .arch-badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    margin-bottom: 8px;
+    display: inline-block !important;
+    padding: 3px 10px !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    margin-bottom: 8px !important;
 }
-.badge-hybrid { background: rgba(121, 40, 202, 0.2); color: #a855f7; border: 1px solid #7928ca; }
-.badge-security { background: rgba(63, 185, 80, 0.2); color: #3fb950; border: 1px solid #3fb950; }
-.badge-speed { background: rgba(6, 182, 212, 0.2); color: #06b6d4; border: 1px solid #06b6d4; }
-.badge-arch { background: rgba(88, 166, 255, 0.2); color: #58a6ff; border: 1px solid #58a6ff; }
+.badge-hybrid { background: rgba(199, 146, 255, 0.15) !important; color: var(--accent) !important; border: 1px solid var(--line-focus) !important; }
+.badge-security { background: var(--good-bg) !important; color: var(--good) !important; border: 1px solid var(--good-line) !important; }
+.badge-speed { background: rgba(242, 134, 207, 0.15) !important; color: var(--pink) !important; border: 1px solid #6b334f !important; }
+.badge-arch { background: rgba(199, 146, 255, 0.12) !important; color: var(--accent) !important; border: 1px solid var(--line-active) !important; }
 
 /* Форматирование Markdown */
 .stMarkdown {
@@ -296,37 +355,18 @@ section[data-testid="stSidebar"] {
     overflow-wrap: break-word;
 }
 
-/* Пресеты над строкой вопроса (максимум 1/4 ширины чата) */
-.st-key-chat_presets_box,
-[class*="st-key-chat_presets_box"] {
-    max-width: var(--chat-quarter-width) !important;
-    width: 100% !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    margin-bottom: 12px !important;
-    box-sizing: border-box !important;
-}
-.st-key-chat_presets_box .stButton {
-    margin-bottom: 6px !important;
-}
-.st-key-chat_presets_box .stButton button {
-    width: 100% !important;
-    text-align: left !important;
-    justify-content: flex-start !important;
-    font-size: 13px !important;
-    padding: 8px 12px !important;
-}
+
 
 /* Фиксированная панель ввода: максимум 1/4 ширины чата */
 [data-testid="stBottom"] {
-    background-color: var(--agy-bg) !important;
+    background-color: var(--bg) !important;
     display: flex !important;
     justify-content: center !important;
     align-items: center !important;
     width: 100% !important;
     left: 0 !important;
     right: 0 !important;
-    border-top: 1px solid rgba(48, 54, 61, 0.4) !important;
+    border-top: 1px solid var(--line) !important;
 }
 
 [data-testid="stBottom"] > div,
@@ -353,43 +393,55 @@ section[data-testid="stSidebar"] {
     box-sizing: border-box !important;
 }
 .stChatInputContainer textarea {
-    background-color: #161b22 !important;
-    border: 1px solid var(--agy-border) !important;
-    color: var(--agy-text) !important;
+    background-color: #100d19 !important;
+    border: 1px solid var(--line-active) !important;
+    color: var(--text) !important;
     border-radius: 10px !important;
 }
 .stChatInputContainer textarea:focus {
-    border-color: #58a6ff !important;
-    box-shadow: 0 0 10px rgba(88, 166, 255, 0.2) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 14px rgba(199, 146, 255, 0.28) !important;
 }
 
 /* Кнопки с адаптивным переносом текста */
 .stButton button {
-    background: #21262d;
-    color: var(--agy-text);
-    border: 1px solid var(--agy-border);
-    border-radius: 8px;
-    transition: all 0.2s ease-in-out;
+    background: var(--surface2) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 8px !important;
+    transition: all 0.18s ease-in-out !important;
     white-space: normal !important;
     height: auto !important;
     min-height: 42px !important;
-    padding: 8px 12px !important;
+    padding: 8px 14px !important;
     line-height: 1.3 !important;
     word-break: break-word !important;
+    font-weight: 500 !important;
 }
 .stButton button:hover {
-    border-color: #58a6ff;
-    color: #58a6ff;
-    box-shadow: 0 0 12px rgba(88, 166, 255, 0.15);
+    background: var(--surface-hover) !important;
+    border-color: var(--accent) !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 16px rgba(197, 138, 246, 0.25) !important;
 }
 
 /* Адаптивные блоки спойлеров и цитат */
 [data-testid="stExpander"] {
-    background: #161b22 !important;
-    border: 1px solid var(--agy-border) !important;
-    border-radius: 8px !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 10px !important;
     margin-top: 10px !important;
     margin-bottom: 14px !important;
+}
+
+/* Селекты и поля ввода */
+[data-baseweb="select"] > div {
+    background-color: var(--surface2) !important;
+    border-color: var(--line) !important;
+    border-radius: 8px !important;
+}
+[data-baseweb="select"] > div:hover {
+    border-color: var(--accent) !important;
 }
 
 /* Медиа-запросы адаптивности под любые разрешения */
@@ -473,9 +525,120 @@ section[data-testid="stSidebar"] {
         padding-right: 0.5rem !important;
     }
 }
+
+/* Интерактивный восклицательный знак с тултипом */
+.rag-help-badge {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(245, 158, 11, 0.18);
+    border: 1.5px solid #f59e0b;
+    color: #fbbf24;
+    font-size: 11px;
+    font-weight: 800;
+    cursor: help;
+    user-select: none;
+    vertical-align: middle;
+    margin-left: 6px;
+    line-height: 1;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rag-help-badge:hover {
+    background: #f59e0b;
+    color: #100c1b;
+    transform: scale(1.15);
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+.rag-help-badge .rag-help-tooltip {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    min-width: 120px;
+    max-width: 210px;
+    width: max-content;
+    background: #1a1427;
+    color: #f6effa;
+    border: 1.5px solid #f59e0b;
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 11.5px;
+    line-height: 1.35;
+    font-weight: 500;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75);
+    z-index: 999999;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    text-align: center;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    white-space: normal;
+}
+.rag-help-badge:hover .rag-help-tooltip {
+    visibility: visible;
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+.rag-help-badge .rag-help-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: #f59e0b transparent transparent transparent;
+}
+
+/* Позиционирование тултипа в сайдбаре: строго центрировано с адаптивной шириной без обрезки по краям */
+[data-testid="stSidebar"] .rag-help-badge .rag-help-tooltip {
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) translateY(4px) !important;
+    min-width: 110px !important;
+    max-width: 190px !important;
+    text-align: center !important;
+}
+[data-testid="stSidebar"] .rag-help-badge:hover .rag-help-tooltip {
+    transform: translateX(-50%) translateY(0) !important;
+}
+[data-testid="stSidebar"] .rag-help-badge .rag-help-tooltip::after {
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+
+/* Оранжевая плашка для невыполненных условий применения */
+.rag-unapplied-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    padding: 4px 10px;
+    margin-top: 6px;
+}
 </style>
 """
 st.markdown(APP_CSS, unsafe_allow_html=True)
+
+
+def render_help_badge(tooltip_text: str) -> str:
+    """Генерирует компактный HTML-значок восклицательного знака с всплывающей подсказкой."""
+    safe_tooltip = tooltip_text.replace('"', '&quot;')
+    return f'<span class="rag-help-badge" title="{safe_tooltip}">!<span class="rag-help-tooltip">{safe_tooltip}</span></span>'
+
 
 
 # =====================================================================
@@ -512,6 +675,35 @@ def get_pipeline(llm_model: str, embed_model: str, base_url: str) -> RAGPipeline
     )
 
 
+@st.cache_data(ttl=5)
+def cached_server_status(url: str) -> Tuple[bool, List[str]]:
+    """Быстрая проверка статуса сервера и активных моделей с защитой от лагов."""
+    online = server_manager.is_server_online(url, timeout=0.6)
+    models = server_manager.get_loaded_models(url, timeout=0.8) if online else []
+    return online, models
+
+
+@st.cache_data(ttl=300)
+def cached_index_stats(index_file: str) -> int:
+    """Кэшированное чтение числа чанков без парсинга 50МБ JSON на каждый клик."""
+    p = Path(index_file)
+    if not p.exists():
+        return 0
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return len(data)
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=60)
+def cached_data_files(data_dir: str) -> List[Path]:
+    """Кэшированный список файлов базы знаний."""
+    p = Path(data_dir)
+    return list(p.glob("*.*")) if p.exists() else []
+
+
 # =====================================================================
 # Инициализация переменных сессии
 # =====================================================================
@@ -528,6 +720,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "active_hits" not in st.session_state:
     st.session_state.active_hits = []
+if "custom_system_prompt" not in st.session_state:
+    st.session_state.custom_system_prompt = RAGPipeline.SYSTEM_PROMPT
 if "rag_config" not in st.session_state:
     st.session_state.rag_config = {
         "top_k": 5,
@@ -545,13 +739,13 @@ if "rag_config" not in st.session_state:
 with st.sidebar:
     st.markdown(
         """
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #30363d;">
-            <div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #7928ca, #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 22px; box-shadow: 0 0 16px rgba(121,40,202,0.45);">
-                ⚛️
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
+            <div style="width: 38px; height: 38px; border-radius: 10px; background: #1a1029; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 16px rgba(199,146,255,0.3); border: 1px solid var(--line-active); flex-shrink: 0;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="8" fill="#1a1029"/><path d="m16 4 11 7v11l-11 7L5 22V11z" fill="#b86afd"/><path d="m16 8 7 5-7 5-7-5zm0 11 7-4v6l-7 4z" fill="#f8cdf3"/><path d="m9 15 6 4v6l-6-4z" fill="#ed48b2"/></svg>
             </div>
             <div>
-                <div style="font-weight: 700; font-size: 17px; color: #f0f6fc; letter-spacing: 0.5px;">Enterprise RAG</div>
-                <div style="font-size: 11px; color: #8b949e;">Автономный ИИ-ассистент</div>
+                <div style="font-weight: 700; font-size: 18px; color: var(--text); letter-spacing: 0.04em;">EXSCIO</div>
+                <div style="font-size: 11px; color: var(--text-muted); letter-spacing: 0.02em;">Знания в ваших документах</div>
             </div>
         </div>
         """,
@@ -576,7 +770,16 @@ with st.sidebar:
     )
 
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;'>Провайдер инференса</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px;">
+                Провайдер инференса {render_help_badge("Необходима перезагрузка для применения")}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     backend_options = [
         "🟣 LM Studio (локально)",
@@ -603,43 +806,62 @@ with st.sidebar:
 
     if selected_backend == "🟣 LM Studio (локально)":
         lm_studio_url = "http://127.0.0.1:1234/v1"
-        llm_model = "qwen2.5-14b-instruct-1m"
         embed_model = "text-embedding-nomic-embed-text-v1.5"
 
-        is_online = server_manager.is_server_online(lm_studio_url)
+        is_online = cached_server_status(lm_studio_url)
         loaded_models = server_manager.get_loaded_models() if is_online else []
-        llm_ready = "qwen2.5-14b-instruct-1m" in loaded_models
-        emb_ready = "text-embedding-nomic-embed-text-v1.5" in loaded_models
+        llm_loaded = [m for m in loaded_models if not ("embed" in m.lower() or "nomic" in m.lower())]
+        if llm_loaded:
+            llm_model = llm_loaded[0]
+            llm_ready = True
+        else:
+            llm_model = "qwen2.5-14b-instruct-1m"
+            llm_ready = False
+        emb_ready = any("nomic" in m.lower() or "embed" in m.lower() for m in loaded_models)
         stack_ready = is_online and llm_ready and emb_ready
 
         if stack_ready:
             st.markdown(
-                """
+                f"""
                 <div style="background: rgba(63, 185, 80, 0.12); border: 1px solid #3fb950; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #3fb950; display: flex; align-items: center; gap: 6px;">
                         <span>🟢</span><span>LM Studio активен (1234)</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">GPU: Qwen2.5-14B | CPU: Nomic Embed</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">GPU: {llm_model} | CPU: Nomic Embed</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-            col_b1, col_b2, col_b3 = st.columns(3)
+            col_b1, col_b2 = st.columns(2)
             with col_b1:
-                if st.button("🔄 Рестарт", key="btn_restart_stack", use_container_width=True, help="Перезапустить LM Studio"):
+                if st.button("🔄 Перезапуск", key="btn_restart_stack", use_container_width=True, help="Перезапустить стек моделей"):
                     with st.status("Перезагрузка стека моделей...", expanded=True) as status:
                         server_manager.ensure_autonomous_stack(progress_callback=st.write)
                         status.update(label="✅ Стек перезапущен!", state="complete")
+                    cached_server_status.clear()
                     st.rerun()
             with col_b2:
-                if st.button("❄️ Выгрузить", key="btn_unload_gpu", use_container_width=True, help="Выгрузить модели из GPU"):
+                if st.button("❄️ Выгрузить GPU", key="btn_unload_gpu", use_container_width=True, help="Выгрузить модели из видеопамяти"):
                     server_manager.unload_all_models()
+                    cached_server_status.clear()
                     st.rerun()
-            with col_b3:
-                if st.button("⏹️ Стоп", key="btn_stop_stack", use_container_width=True, help="Остановить сервер LM Studio"):
-                    server_manager.stop_local_server()
-                    st.rerun()
+            if st.button("⏹️ Остановить сервер", key="btn_stop_stack", use_container_width=True, help="Остановить локальный сервер LM Studio"):
+                server_manager.stop_local_server()
+                cached_server_status.clear()
+                st.rerun()
         else:
+            st.markdown(
+                """
+                <style>
+                .st-key-sidebar_backend_selector div[data-testid="stSelectbox"] {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    border-radius: 8px !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
             status_text = "Сервер выключен 🔴" if not is_online else "Модели не в памяти 🟡"
             st.markdown(
                 f"""
@@ -704,6 +926,18 @@ with st.sidebar:
         else:
             st.markdown(
                 """
+                <style>
+                .st-key-sidebar_backend_selector div[data-testid="stSelectbox"] {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    border-radius: 8px !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                """
                 <div style="background: rgba(248, 81, 73, 0.12); border: 1px solid #f85149; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
                         <span>⚠️</span><span>Ollama выключена 🔴</span>
@@ -756,6 +990,18 @@ with st.sidebar:
         else:
             st.markdown(
                 """
+                <style>
+                .st-key-sidebar_backend_selector div[data-testid="stSelectbox"] {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    border-radius: 8px !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                """
                 <div style="background: rgba(248, 81, 73, 0.12); border: 1px solid #f85149; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
                         <span>🐳</span><span>Контейнеры не запущены 🔴</span>
@@ -781,13 +1027,38 @@ with st.sidebar:
 
     else:
         # Клиентский режим: произвольный URL
-        st.markdown("<div style='font-size: 11px; color: #8b949e; margin-bottom: 4px;'>Подключение к произвольному URL:</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style='display: flex; align-items: center; font-size: 11px; color: #8b949e; margin-bottom: 4px;'>
+                Подключение к произвольному URL {render_help_badge("Нажмите Enter для применения")}:
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         lm_studio_url = st.text_input(
-            "Сервер OpenAI-совместимого API",
+            "Сервер API инференса",
             value="http://127.0.0.1:1234/v1",
             key="sidebar_server_url",
-            help="Адрес внешнего или локального API сервера"
+            help="Нажмите Enter для применения"
         )
+        is_custom_online = server_manager.is_server_online(lm_studio_url)
+        if not is_custom_online:
+            st.markdown(
+                """
+                <style>
+                .st-key-sidebar_backend_selector div[data-testid="stSelectbox"],
+                .st-key-sidebar_server_url div[data-testid="stTextInput"] input {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    border-radius: 8px !important;
+                }
+                </style>
+                <div class="rag-unapplied-badge" style="margin-bottom: 8px;">
+                    ⚠️ Сервер недоступен! Условие применения не выполнено: запустите API сервер по указанному адресу.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
         available_models = fetch_models(lm_studio_url)
         default_llm = "qwen2.5-14b-instruct-1m" if "qwen2.5-14b-instruct-1m" in available_models else available_models[0]
         llm_model = st.selectbox(
@@ -814,19 +1085,19 @@ with st.sidebar:
     
     st.markdown(
         f"""
-        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-top: auto;">
-            <div style="font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Статус системы</div>
+        <div style="background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: auto;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Статус системы</div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                <span style="color: #8b949e;">Пайплайн:</span>
+                <span style="color: var(--text-muted);">Пайплайн:</span>
                 <span style="color: {status_color}; font-weight: 600;">{status_text}</span>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                <span style="color: #8b949e;">Поисковый движок:</span>
-                <span style="color: #58a6ff; font-weight: 500;">Гибридный BM25 + RRF</span>
+                <span style="color: var(--text-muted);">Поисковый движок:</span>
+                <span style="color: var(--accent); font-weight: 500;">Гибридный BM25 + RRF</span>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span style="color: #8b949e;">CJK-фильтр:</span>
-                <span style="color: #3fb950; font-weight: 500;">Активен 🛡️</span>
+                <span style="color: var(--text-muted);">CJK-фильтр:</span>
+                <span style="color: var(--good); font-weight: 500;">Активен 🛡️</span>
             </div>
         </div>
         """,
@@ -843,8 +1114,8 @@ def render_message(msg: Dict[str, Any]) -> None:
         st.markdown(
             f"""
             <div class="chat-bubble-user">
-                <div style="font-size: 11px; font-weight: 700; color: #58a6ff; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">👤 Пользователь</div>
-                <div style="font-size: 15px; line-height: 1.6;">{msg['content']}</div>
+                <div style="font-size: 11px; font-weight: 700; color: var(--pink); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">👤 Вы</div>
+                <div style="font-size: 15px; line-height: 1.6; color: var(--text);">{msg['content']}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -859,8 +1130,8 @@ def render_message(msg: Dict[str, Any]) -> None:
             <div class="chat-bubble-assistant">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="font-size: 16px;">⚛️</span>
-                        <span style="font-size: 12px; font-weight: 700; background: linear-gradient(135deg, #7928ca, #58a6ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-transform: uppercase; letter-spacing: 0.5px;">ИИ-Ассистент</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="4" fill="#1a1029"/><path d="m16 4 11 7v11l-11 7L5 22V11z" fill="#b86afd"/><path d="m16 8 7 5-7 5-7-5zm0 11 7-4v6l-7 4z" fill="#f8cdf3"/><path d="m9 15 6 4v6l-6-4z" fill="#ed48b2"/></svg>
+                        <span style="font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;">EXSCIO · ИИ-Ассистент</span>
                     </div>
                 </div>
                 {reasoning_html}
@@ -889,14 +1160,17 @@ if mode == "💬 Чат с документами":
         st.markdown(
             f"""
             <div class="chat-header-container">
-                <h2 class="chat-header-title">Чат с документами</h2>
+                <div>
+                    <div class="tag">ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ</div>
+                    <h2 class="chat-header-title">Чат с документами</h2>
+                </div>
                 <div class="chat-header-stat">Топ-K: {top_k_val} • Лимит токенов: {budget_val}</div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
 
         if not index_exists:
             st.warning("⚠️ База знаний не найдена. Перейдите в раздел **'📚 База знаний'** в левой панели и запустите индексацию.")
@@ -905,39 +1179,13 @@ if mode == "💬 Чат с документами":
         # Инициализация пайплайна
         pipeline = get_pipeline(llm_model=llm_model, embed_model=embed_model, base_url=lm_studio_url)
 
-        # Выбор быстрых запросов (только когда диалог чист)
-        selected_prompt = None
-        if not st.session_state.messages:
-            with st.container(key="chat_presets_box"):
-                st.markdown(
-                    """
-                    <div style="font-size: 13px; font-weight: 600; color: #8b949e; margin-bottom: 8px; text-align: center;">Быстрый старт:</div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                col_p1, col_p2 = st.columns(2)
-                with col_p1:
-                    if st.button("📋 Общая сводка по документам", key="btn_prompt_0", use_container_width=True):
-                        selected_prompt = "О чем эти документы? Сформируй общую сводку"
-                    if st.button("👔 Деловой дресс-код", key="btn_prompt_1", use_container_width=True):
-                        selected_prompt = "какие требования к деловому стилю одежды и дресс-коду?"
-                    if st.button("👟 Спортивная форма", key="btn_prompt_2", use_container_width=True):
-                        selected_prompt = "какие требования к одежде и обуви для занятий спортом?"
-                with col_p2:
-                    if st.button("🎒 Цветовая гамма формы", key="btn_prompt_3", use_container_width=True):
-                        selected_prompt = "какой цвет и стандарты формы установлены в регламентах?"
-                    if st.button("📝 Порядок зачисления", key="btn_prompt_4", use_container_width=True):
-                        selected_prompt = "какие правила приема и документы нужны для зачисления?"
-                    if st.button("👥 Руководство и структура", key="btn_prompt_5", use_container_width=True):
-                        selected_prompt = "Кто является руководителем и как устроена структура управления?"
-
         # 1. Статический рендеринг всей существующей истории переписки
         for msg in st.session_state.messages:
             render_message(msg)
 
         # 2. Получение нового пользовательского ввода
         prompt = st.chat_input("Спросите что-нибудь по загруженным документам...")
-        active_user_query = prompt or selected_prompt
+        active_user_query = prompt
 
         # 3. Обработка нового запроса (генерация выполняется строго один раз)
         if active_user_query:
@@ -953,8 +1201,8 @@ if mode == "💬 Чат с документами":
                     <div class="chat-bubble-assistant">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="font-size: 16px;">⚛️</span>
-                                <span style="font-size: 12px; font-weight: 700; background: linear-gradient(135deg, #7928ca, #58a6ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-transform: uppercase; letter-spacing: 0.5px;">ИИ-Ассистент</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="4" fill="#1a1029"/><path d="m16 4 11 7v11l-11 7L5 22V11z" fill="#b86afd"/><path d="m16 8 7 5-7 5-7-5zm0 11 7-4v6l-7 4z" fill="#f8cdf3"/><path d="m9 15 6 4v6l-6-4z" fill="#ed48b2"/></svg>
+                                <span style="font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;">EXSCIO · ИИ-Ассистент</span>
                             </div>
                         </div>
                     </div>
@@ -1011,8 +1259,9 @@ if mode == "💬 Чат с документами":
                         reasoning_placeholder.markdown(f"""<div class="reasoning-step">⚡ {reasoning_info}</div>""", unsafe_allow_html=True)
 
                         # Формирование сообщений для модели
+                        current_sys_prompt = st.session_state.get("custom_system_prompt", pipeline.SYSTEM_PROMPT)
                         api_messages = [
-                            {"role": "system", "content": f"{pipeline.SYSTEM_PROMPT}\n\n{context_xml}"}
+                            {"role": "system", "content": f"{current_sys_prompt}\n\n{context_xml}"}
                         ]
                         for msg in st.session_state.messages[:-1]:
                             if msg["role"] in ["user", "assistant"]:
@@ -1092,34 +1341,66 @@ elif mode == "⚙️ Параметры и модели":
     with st.container():
         st.markdown(
             """
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; margin-bottom: 8px;">
-                <span>Рабочая область</span>
-                <span>/</span>
-                <span style="color: #7928ca; font-weight: 600;">Системные настройки</span>
-            </div>
-            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: #f0f6fc;">Настройки Enterprise RAG</h2>
+            <div class="tag">СИСТЕМНЫЕ ПАРАМЕТРЫ</div>
+            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: var(--text);">Параметры и модели</h2>
             """,
             unsafe_allow_html=True
         )
-        st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
+
+        # Информационная карточка классификации параметров
+        st.markdown(
+            """
+            <div style="background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 20px;">
+                <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px;">Категории параметров системы и условия их применения:</div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; font-size: 12px;">
+                    <div style="background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b; padding: 8px 10px; border-radius: 4px;">
+                        <b style="color: #fbbf24;">❗ Требуется запуск / переподключение</b><br>
+                        <span style="color: var(--text-muted);">Провайдер инференса, модели LLM и эмбеддингов, URL API. Выделяется <b>оранжевой рамкой</b>, если выбранный сервис еще не запущен.</span>
+                    </div>
+                    <div style="background: rgba(184, 106, 253, 0.08); border-left: 3px solid #b86afd; padding: 8px 10px; border-radius: 4px;">
+                        <b style="color: #e4bcff;">❗ Требуется переиндексация БД</b><br>
+                        <span style="color: var(--text-muted);">Размер чанка, перекрытие, добавление файлов. Выделяется <b>оранжевой рамкой</b> до нажатия кнопки «Запустить полную переиндексацию».</span>
+                    </div>
+                    <div style="background: rgba(63, 185, 80, 0.08); border-left: 3px solid #3fb950; padding: 8px 10px; border-radius: 4px;">
+                        <b style="color: #7ee787;">❗ Применение на лету (в диалоге)</b><br>
+                        <span style="color: var(--text-muted);">Температура, штраф за повторы, Топ-K, лимит токенов, порог Zero-Retrieval, инструкция. Нажмите «Применить» для фиксации.</span>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Настройки поиска")
+            st.markdown(
+                f"""
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <div style="display: flex; align-items: center;">
+                        <h3 style="margin: 0; color: var(--text); font-size: 18px;">Настройки поиска</h3>
+                        {render_help_badge("Требуется сохранение для применения")}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             st.session_state.rag_config["top_k"] = st.slider(
                 "Число извлекаемых фрагментов (Топ-K)",
                 min_value=2,
                 max_value=12,
                 value=st.session_state.rag_config.get("top_k", 5),
-                key="pref_slider_top_k"
+                key="pref_slider_top_k",
+                help="Количество лучших чанков (гибридный поиск BM25 + Dense RRF)"
             )
             st.session_state.rag_config["context_limit"] = st.slider(
-                "Бюджет токенов контекста (лимит Tiktoken)",
+                "Бюджет токенов контекста (лимит токенов)",
                 min_value=1000,
                 max_value=4000,
                 value=st.session_state.rag_config.get("context_limit", 2500),
                 step=100,
-                key="pref_slider_context_limit"
+                key="pref_slider_context_limit",
+                help="Максимальный объем текстового контекста для модели"
             )
             st.session_state.rag_config["confidence_thresh"] = st.slider(
                 "Порог уверенности (Zero-Retrieval)",
@@ -1127,18 +1408,30 @@ elif mode == "⚙️ Параметры и модели":
                 max_value=0.05,
                 value=st.session_state.rag_config.get("confidence_thresh", 0.015),
                 step=0.005,
-                key="pref_slider_confidence_thresh"
+                key="pref_slider_confidence_thresh",
+                help="Порог отсечения при отсутствии релевантных данных"
             )
 
         with col2:
-            st.subheader("Параметры генерации (сэмплирование)")
+            st.markdown(
+                f"""
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <div style="display: flex; align-items: center;">
+                        <h3 style="margin: 0; color: var(--text); font-size: 18px;">Параметры генерации</h3>
+                        {render_help_badge("Требуется сохранение для применения")}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             st.session_state.rag_config["temperature"] = st.slider(
                 "Температура модели (креативность / детерминизм)",
                 min_value=0.0,
                 max_value=1.0,
                 value=st.session_state.rag_config.get("temperature", 0.2),
                 step=0.05,
-                key="pref_slider_temperature"
+                key="pref_slider_temperature",
+                help="0.0 — максимально строгие факты, 1.0 — более свободные формулировки"
             )
             st.session_state.rag_config["presence_pen"] = st.slider(
                 "Штраф за повторы (Presence Penalty)",
@@ -1146,20 +1439,105 @@ elif mode == "⚙️ Параметры и модели":
                 max_value=1.0,
                 value=st.session_state.rag_config.get("presence_pen", 0.1),
                 step=0.05,
-                key="pref_slider_presence_pen"
+                key="pref_slider_presence_pen",
+                help="Предотвращает зацикливание и повторение одних и тех же фраз"
             )
             st.info("🛡️ Автоматический CJK-фильтр: активирован на постоянной основе (все китайские иероглифы и посторонние символы отсекаются).")
 
-        st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 20px 0;'>", unsafe_allow_html=True)
-        st.subheader("Инструкция агента")
-        st.text_area(
-            "Системная инструкция Enterprise RAG",
-            value=RAGPipeline.SYSTEM_PROMPT,
-            height=220,
-            disabled=True,
-            key="pref_textarea_sysprompt",
-            help="Инструкция гарантирует фактологическую точность, изоляцию тегов <context> и запрет китайских иероглифов."
+        # Отслеживание изменений параметров поиска и генерации (оранжевая рамка при невыполненном условии применения)
+        if "applied_rag_config" not in st.session_state:
+            st.session_state.applied_rag_config = dict(st.session_state.rag_config)
+
+        is_search_gen_changed = (st.session_state.rag_config != st.session_state.applied_rag_config)
+        if is_search_gen_changed:
+            st.markdown(
+                """
+                <style>
+                .st-key-pref_slider_top_k,
+                .st-key-pref_slider_context_limit,
+                .st-key-pref_slider_confidence_thresh,
+                .st-key-pref_slider_temperature,
+                .st-key-pref_slider_presence_pen,
+                div[data-testid="stSlider"]:has(input[aria-label*="Число извлекаемых"]),
+                div[data-testid="stSlider"]:has(input[aria-label*="Бюджет токенов"]),
+                div[data-testid="stSlider"]:has(input[aria-label*="Порог уверенности"]),
+                div[data-testid="stSlider"]:has(input[aria-label*="Температура модели"]),
+                div[data-testid="stSlider"]:has(input[aria-label*="Штраф за повторы"]) {
+                    border: 2px solid #f59e0b !important;
+                    border-radius: 10px !important;
+                    padding: 8px 12px !important;
+                    background: rgba(245, 158, 11, 0.05) !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                }
+                </style>
+                <div class="rag-unapplied-badge" style="margin: 10px 0 16px 0;">
+                    ⚠️ Параметры изменены: требуется сохранение для применения.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        if st.button("💾 Применить параметры поиска и генерации", key="btn_apply_search_gen", use_container_width=True):
+            st.session_state.applied_rag_config = dict(st.session_state.rag_config)
+            st.success("✅ Параметры поиска и генерации успешно зафиксированы и применены!")
+            time.sleep(0.4)
+            st.rerun()
+
+        st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 20px 0;'>", unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center;">
+                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Инструкция агента</h3>
+                    {render_help_badge("Требуется сохранение для применения")}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
+        st.caption("Вы можете редактировать системную инструкцию ИИ-ассистента прямо здесь. Изменения вступают в силу после сохранения без перезапуска приложения.")
+
+        current_prompt_val = st.session_state.get("custom_system_prompt", RAGPipeline.SYSTEM_PROMPT)
+        edited_sys_prompt = st.text_area(
+            "Системная инструкция EXSCIO RAG",
+            value=current_prompt_val,
+            height=220,
+            key="pref_textarea_sysprompt",
+            help="Требуется сохранение для применения"
+        )
+
+        is_prompt_unapplied = (edited_sys_prompt.strip() != current_prompt_val.strip())
+        if is_prompt_unapplied:
+            st.markdown(
+                """
+                <style>
+                .st-key-pref_textarea_sysprompt textarea,
+                div[data-testid="stTextArea"]:has(textarea) textarea {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    background: rgba(245, 158, 11, 0.05) !important;
+                }
+                </style>
+                <div class="rag-unapplied-badge" style="margin-bottom: 12px;">
+                    ⚠️ Инструкция изменена: требуется сохранение для применения.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        col_sp1, col_sp2 = st.columns([1, 1])
+        with col_sp1:
+            if st.button("💾 Сохранить и применить инструкцию", key="btn_save_system_prompt", use_container_width=True):
+                st.session_state["custom_system_prompt"] = edited_sys_prompt
+                st.success("✅ Системная инструкция успешно сохранена и активирована для всех последующих ответов!")
+                time.sleep(0.4)
+                st.rerun()
+        with col_sp2:
+            if st.button("🔄 Сбросить к стандартной", key="btn_reset_system_prompt", use_container_width=True):
+                st.session_state["custom_system_prompt"] = RAGPipeline.SYSTEM_PROMPT
+                st.info("ℹ️ Системная инструкция сброшена к исходной стандартной инструкции EXSCIO.")
+                time.sleep(0.4)
+                st.rerun()
 
 
 # =====================================================================
@@ -1169,27 +1547,15 @@ elif mode == "📚 База знаний":
     with st.container():
         st.markdown(
             """
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; margin-bottom: 8px;">
-                <span>Рабочая область</span>
-                <span>/</span>
-                <span style="color: #7928ca; font-weight: 600;">Хранилище знаний</span>
-            </div>
-            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: #f0f6fc;">База документов и индексация</h2>
+            <div class="tag">ХРАНИЛИЩЕ ЗНАНИЙ</div>
+            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: var(--text);">База документов и индексация</h2>
             """,
             unsafe_allow_html=True
         )
-        st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
 
-        chunk_count = 0
-        if index_exists:
-            try:
-                with open(INDEX_FILE, "r", encoding="utf-8") as f:
-                    idx_data = json.load(f)
-                    chunk_count = len(idx_data)
-            except Exception:
-                pass
-
-        all_data_files = list(DATA_DIR.glob("*.*")) if DATA_DIR.exists() else []
+        chunk_count = cached_index_stats(INDEX_FILE) if index_exists else 0
+        all_data_files = cached_data_files(str(DATA_DIR))
 
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         with col_m1:
@@ -1204,15 +1570,43 @@ elif mode == "📚 База знаний":
         st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
 
         # 1. Управление документами и загрузка
-        st.subheader("📁 Добавление документов в базу знаний")
+        st.markdown(
+            f"""
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center;">
+                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">📁 Добавление документов в базу знаний</h3>
+                    {render_help_badge("Требуется сохранение и индексация")}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         uploaded_files = st.file_uploader(
-            "Перетащите новые файлы (PDF, TXT, MD) для загрузки в корпоративную базу знаний:",
-            type=["pdf", "txt", "md"],
+            "Перетащите новые файлы (PDF, TXT, MD, DOCX, XLSX) для загрузки в корпоративную базу знаний:",
+            type=["pdf", "txt", "md", "docx", "xlsx"],
             accept_multiple_files=True,
             key="kb_file_uploader"
         )
 
         if uploaded_files:
+            st.markdown(
+                """
+                <style>
+                .st-key-kb_file_uploader div[data-testid="stFileUploader"],
+                div[data-testid="stFileUploader"] {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    border-radius: 8px !important;
+                    padding: 8px !important;
+                    background: rgba(245, 158, 11, 0.04) !important;
+                }
+                </style>
+                <div class="rag-unapplied-badge" style="margin-bottom: 10px;">
+                    ⚠️ Файлы загружены: требуется сохранение и индексация для применения.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             if st.button(f"📥 Сохранить {len(uploaded_files)} файл(ов) в data/ и подготовить к индексации", key="kb_save_files_btn", use_container_width=True):
                 DATA_DIR.mkdir(parents=True, exist_ok=True)
                 saved_count = 0
@@ -1221,7 +1615,8 @@ elif mode == "📚 База знаний":
                     with open(target_path, "wb") as f:
                         f.write(uf.getbuffer())
                     saved_count += 1
-                st.success(f"✅ Успешно сохранено {saved_count} документов в каталог {DATA_DIR}. Запустите переиндексацию ниже.")
+                cached_data_files.clear()
+                st.success(f"✅ Успешно сохранено {saved_count} документов в каталог {DATA_DIR}. Теперь выполните переиндексацию базы ниже.")
                 st.rerun()
 
         if all_data_files:
@@ -1281,25 +1676,66 @@ elif mode == "📚 База знаний":
         st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 24px 0;'>", unsafe_allow_html=True)
 
         # 3. Переиндексация базы
-        st.subheader("⚙️ Параметры индексации и переиндексация базы")
+        st.markdown(
+            f"""
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center;">
+                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">⚙️ Параметры нарезки и переиндексация базы</h3>
+                    {render_help_badge("Требуется переиндексация для применения")}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        if "applied_chunk_size" not in st.session_state:
+            st.session_state.applied_chunk_size = 800
+        if "applied_overlap" not in st.session_state:
+            st.session_state.applied_overlap = 150
+
         col_s1, col_s2 = st.columns(2)
         with col_s1:
             chunk_size_input = st.slider(
                 "Размер чанка (символов)",
                 min_value=300,
                 max_value=2000,
-                value=800,
+                value=st.session_state.applied_chunk_size,
                 step=50,
-                key="kb_slider_chunk_size"
+                key="kb_slider_chunk_size",
+                help="Требуется переиндексация для применения"
             )
         with col_s2:
             overlap_input = st.slider(
                 "Перекрытие чанков (символов)",
                 min_value=50,
                 max_value=400,
-                value=150,
+                value=st.session_state.applied_overlap,
                 step=25,
-                key="kb_slider_overlap"
+                key="kb_slider_overlap",
+                help="Требуется переиндексация для применения"
+            )
+
+        is_reindex_needed = (chunk_size_input != st.session_state.applied_chunk_size) or (overlap_input != st.session_state.applied_overlap)
+        if is_reindex_needed:
+            st.markdown(
+                f"""
+                <style>
+                .st-key-kb_slider_chunk_size div[data-testid="stSlider"],
+                .st-key-kb_slider_overlap div[data-testid="stSlider"],
+                div[data-testid="stSlider"]:has(input[aria-label*="Размер чанка"]),
+                div[data-testid="stSlider"]:has(input[aria-label*="Перекрытие чанков"]) {
+                    border: 2px solid #f59e0b !important;
+                    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
+                    border-radius: 8px !important;
+                    padding: 8px 12px !important;
+                    background: rgba(245, 158, 11, 0.05) !important;
+                }
+                </style>
+                <div class="rag-unapplied-badge" style="margin-bottom: 12px;">
+                    ⚠️ Параметры нарезки изменены: требуется переиндексация для применения.
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
         if st.button("🔄 Запустить полную переиндексацию базы", key="kb_btn_reindex", use_container_width=True):
@@ -1312,9 +1748,23 @@ elif mode == "📚 База знаний":
 
             if chunks:
                 serializable = [c.model_dump() for c in chunks]
-                with open(INDEX_FILE, "w", encoding="utf-8") as f:
-                    json.dump(serializable, f, ensure_ascii=False)
+                tmp_file = INDEX_FILE.with_suffix(f".tmp.{os.getpid()}_{int(time.time()*1000)}")
+                try:
+                    with open(tmp_file, "w", encoding="utf-8") as f:
+                        json.dump(serializable, f, ensure_ascii=False)
+                    os.replace(tmp_file, INDEX_FILE)
+                except Exception as e:
+                    if tmp_file.exists():
+                        try:
+                            tmp_file.unlink()
+                        except Exception:
+                            pass
+                    raise e
+                st.session_state.applied_chunk_size = chunk_size_input
+                st.session_state.applied_overlap = overlap_input
                 st.cache_resource.clear()
+                cached_index_stats.clear()
+                cached_data_files.clear()
                 status_box.success(f"✅ Индексация завершена! Всего создано {len(chunks)} чанков с метаданными и векторами.")
                 st.rerun()
             else:
@@ -1328,28 +1778,24 @@ elif mode == "📊 Архитектура и демонстрация":
     with st.container():
         st.markdown(
             """
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; margin-bottom: 8px;">
-                <span>Рабочая область</span>
-                <span>/</span>
-                <span style="color: #7928ca; font-weight: 600;">Презентация заказчику</span>
-            </div>
-            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: #f0f6fc;">Архитектура Enterprise RAG</h2>
-            <div style="font-size: 14px; color: #8b949e; margin-top: 6px;">
+            <div class="tag">ТЕХНОЛОГИЧЕСКИЙ СТЕК</div>
+            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: var(--text);">Архитектура EXSCIO RAG</h2>
+            <div style="font-size: 14px; color: var(--text-muted); margin-top: 6px;">
                 Высокоточная вопросно-ответная система корпоративного класса с двухуровневым поиском, защитой от галлюцинаций и гарантией конфиденциальности данных.
             </div>
             """,
             unsafe_allow_html=True
         )
-        st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
 
         # Карточка 1: Схема пайплайна
         st.markdown(
             """
             <div class="arch-card">
                 <span class="arch-badge badge-hybrid">Ядро архитектуры</span>
-                <h3 style="margin: 0 0 12px 0; color: #f0f6fc; font-size: 18px;">1. Двухуровневый гибридный поиск (Hybrid Retrieval)</h3>
-                <div style="font-size: 14px; line-height: 1.6; color: #c9d1d9;">
-                    В отличие от примитивных векторных баз, система Enterprise RAG использует синергию двух взаимодополняющих подходов:
+                <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">1. Двухуровневый гибридный поиск (Hybrid Retrieval)</h3>
+                <div style="font-size: 14px; line-height: 1.6; color: var(--text);">
+                    В отличие от примитивных векторных баз, система EXSCIO RAG использует синергию двух взаимодополняющих подходов:
                     <ul>
                         <li><b>Лексический уровень (Okapi BM25)</b>: гарантирует безошибочное нахождение точных наименований, номеров приказов, дат, классов, ГОСТов и специализированной терминологии.</li>
                         <li><b>Семантический уровень (Dense 768-D)</b>: векторная модель <code>nomic-embed-text-v1.5</code> улавливает концептуальный смысл запроса даже при несовпадении ключевых слов.</li>
@@ -1366,10 +1812,10 @@ elif mode == "📊 Архитектура и демонстрация":
             """
             <div class="arch-card">
                 <span class="arch-badge badge-arch">Оптимизация внимания LLM</span>
-                <h3 style="margin: 0 0 12px 0; color: #f0f6fc; font-size: 18px;">2. Устранение эффекта «Lost-in-the-Middle»</h3>
-                <div style="font-size: 14px; line-height: 1.6; color: #c9d1d9;">
-                    Исследования трансформерных архитектур (Stanford / Anthropic) доказали, что большие языковые модели лучше всего усваивают информацию в самом начале и в самом конце контекстного окна (U-образная кривая внимания), часто «забывая» факты в середине.<br><br>
-                    <b>Решение Enterprise RAG:</b> контекстный компоновщик переупорядочивает отобранные фрагменты, размещая наивысшие по релевантности чанки по краям промпта, что повышает фактическую точность ответов более чем на 35%.
+                <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">2. Устранение эффекта «Lost-in-the-Middle»</h3>
+                <div style="font-size: 14px; line-height: 1.6; color: var(--text);">
+                    Исследования трансформерных архитектур доказали, что большие языковые модели лучше всего усваивают информацию в самом начале и в самом конце контекстного окна (U-образная кривая внимания), часто «забывая» факты в середине.<br><br>
+                    <b>Решение EXSCIO RAG:</b> контекстный компоновщик переупорядочивает отобранные фрагменты, размещая наивысшие по релевантности чанки по краям промпта, что повышает фактическую точность ответов более чем на 35%.
                 </div>
             </div>
             """,
@@ -1381,10 +1827,10 @@ elif mode == "📊 Архитектура и демонстрация":
             """
             <div class="arch-card">
                 <span class="arch-badge badge-security">Безопасность и соответствие стандартам</span>
-                <h3 style="margin: 0 0 12px 0; color: #f0f6fc; font-size: 18px;">3. 100% On-Premises & Защита от утечек данных</h3>
-                <div style="font-size: 14px; line-height: 1.6; color: #c9d1d9;">
+                <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">3. 100% On-Premises & Защита от утечек данных</h3>
+                <div style="font-size: 14px; line-height: 1.6; color: var(--text);">
                     <ul>
-                        <li><b>Локальный контур инференса:</b> Все модели (LLM и эмбеддинги) исполняются локально на GPU. Ни один байт конфиденциальных документов не передается в облачные сервисы (OpenAI, Anthropic и др.).</li>
+                        <li><b>Локальный контур инференса:</b> Все модели (LLM и эмбеддинги) исполняются локально на GPU. Ни один байт конфиденциальных документов не передается во внешние облачные сервисы.</li>
                         <li><b>Защита от Prompt Injection:</b> Изоляция извлеченных данных внутри строгих XML-тегов <code>&lt;context&gt;</code> блокирует попытки подмены инструкций модели через текст документов.</li>
                         <li><b>Защита от галлюцинаций (Zero-Retrieval):</b> При отсутствии надежных первоисточников система прямо сообщает об отсутствии данных, предотвращая выдумки.</li>
                         <li><b>Аппаратный CJK-фильтр:</b> Специальный потоковый санитайзер исключает проникновение паразитных иероглифов при многоязычном сэмплировании.</li>
@@ -1396,10 +1842,10 @@ elif mode == "📊 Архитектура и демонстрация":
         )
 
         # Таблица сравнения
-        st.markdown("<h3 style='color: #f0f6fc; font-size: 18px; margin-top: 24px;'>Сравнение с типовыми решениями на рынке</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color: var(--text); font-size: 18px; margin-top: 24px;'>Сравнение с типовыми решениями на рынке</h3>", unsafe_allow_html=True)
         st.markdown(
             """
-| Характеристика | Базовый Vector RAG (LangChain / LlamaIndex) | Корпоративный Enterprise RAG 2.0 |
+| Характеристика | Базовые векторные RAG-решения | Корпоративный EXSCIO RAG 2.0 |
 | :--- | :--- | :--- |
 | **Метод поиска** | Только косинусное сходство (теряет точные термины/номера) | **Гибридный (Okapi BM25 + Dense 768-D + RRF)** |
 | **Эффект «середины»** | Не учитывается (потеря фактов в длинном контексте) | **Оптимизированная U-раскладка Lost-in-the-Middle** |
@@ -1411,7 +1857,7 @@ elif mode == "📊 Архитектура и демонстрация":
         )
 
         # Метрики качества
-        st.markdown("<h3 style='color: #f0f6fc; font-size: 18px; margin-top: 24px;'>Контрольные показатели эффективности (Бенчмарки)</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color: var(--text); font-size: 18px; margin-top: 24px;'>Контрольные показатели эффективности (Бенчмарки)</h3>", unsafe_allow_html=True)
         col_b1, col_b2, col_b3, col_b4 = st.columns(4)
         with col_b1:
             st.metric("MRR@5 (Качество ранжирования)", "0.94", "+38% vs Dense")

@@ -1,5 +1,5 @@
 """
-schoolX/api package — REST & SSE API for Enterprise RAG 2.0.
+api package — REST & SSE API for EXSCIO 2.0.
 """
 
 from api.app import create_app, app

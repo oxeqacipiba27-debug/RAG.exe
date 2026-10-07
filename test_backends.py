@@ -127,10 +127,11 @@ def test_docker():
     print(f"  Docker CLI       : 🟢 Найден ({docker_bin})")
 
     # Быстрая проверка наличия WSL2 в Windows
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     wsl_bin = shutil.which("wsl") or shutil.which("wsl.exe")
     if wsl_bin:
         try:
-            res_wsl = subprocess.run([wsl_bin, "-l", "-q"], capture_output=True, text=True, timeout=2)
+            res_wsl = subprocess.run([wsl_bin, "-l", "-q"], capture_output=True, text=True, timeout=2, creationflags=creationflags)
             if res_wsl.returncode != 0 or "not installed" in res_wsl.stderr.lower():
                 print("  Docker Daemon    : 🟡 Docker установлен, но в Windows отсутствует WSL2.")
                 print("  Рекомендация     : Для работы Docker Engine выполните в терминале Администратора: wsl --install")
@@ -139,7 +140,7 @@ def test_docker():
             pass
 
     try:
-        res = subprocess.run([docker_bin, "ps"], capture_output=True, text=True, timeout=5)
+        res = subprocess.run([docker_bin, "ps"], capture_output=True, text=True, timeout=5, creationflags=creationflags)
         if res.returncode == 0:
             print("  Docker Daemon    : 🟢 ДЕМОН АКТИВЕН И ГОТОВ К РАБОТЕ")
             lines = res.stdout.strip().split("\n")

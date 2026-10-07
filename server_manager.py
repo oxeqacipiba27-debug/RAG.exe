@@ -15,6 +15,13 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import httpx
 
 logger = logging.getLogger("server_manager")
@@ -39,6 +46,7 @@ __all__ = [
     "get_lms_cli_path",
     "is_server_online",
     "get_loaded_models",
+    "is_model_loaded",
     "start_local_server",
     "load_model_via_cli",
     "ensure_autonomous_stack",
@@ -151,6 +159,26 @@ def get_loaded_models(base_url: str = DEFAULT_BASE_URL, timeout: float = 2.0) ->
 
     # 3. Если ни CLI, ни v0 API недоступны — возвращаем пустой список (модели не загружены)
     return []
+
+
+def is_model_loaded(target_model: str, loaded_models: List[str]) -> bool:
+    """Проверяет наличие модели в памяти с учетом суффиксов квантования и тегов (:latest, @q4_k_m)."""
+    if not target_model:
+        return False
+    target_clean = target_model.lower().strip()
+    if not target_clean:
+        return False
+    for m in loaded_models:
+        if not m:
+            continue
+        m_clean = m.lower().strip()
+        if not m_clean:
+            continue
+        if target_clean == m_clean:
+            return True
+        if target_clean in m_clean or m_clean in target_clean:
+            return True
+    return False
 
 
 def start_local_server(port: int = DEFAULT_PORT, timeout_sec: int = 15) -> Tuple[bool, str]:
@@ -277,7 +305,7 @@ def ensure_autonomous_stack(
     report(f"Активные модели в памяти: {', '.join(loaded) if loaded else 'нет загруженных моделей'}")
 
     # Загрузка модели эмбеддингов
-    if embed_model not in loaded:
+    if not is_model_loaded(embed_model, loaded):
         report(f"Загрузка эмбеддинг-модели '{embed_model}' на процессоре (GPU off)...")
         ok, msg = load_model_via_cli(embed_model, is_llm=False)
         if not ok:
@@ -285,14 +313,14 @@ def ensure_autonomous_stack(
         report(f"Эмбеддинг-модель '{embed_model}' готова на процессоре (RAM).")
 
     # Загрузка LLM
-    if llm_model not in loaded:
+    if not is_model_loaded(llm_model, loaded):
         report(f"Загрузка генеративной модели '{llm_model}' (GPU max, контекст {context_length})...")
         ok, msg = load_model_via_cli(llm_model, is_llm=True, context_length=context_length)
         if not ok:
             return False, f"Не удалось загрузить LLM: {msg}"
         report(f"LLM '{llm_model}' успешно загружена в память GPU.")
 
-    report("✅ Локальный автономный стек RAG полностью готов к работе!")
+    report("[OK] Локальный автономный стек RAG полностью готов к работе!")
     return True, "Автономный стек готов"
 
 
@@ -475,7 +503,7 @@ def ensure_ollama_stack(
         report(f"Модель генерации '{llm_model}' не найдена в Ollama.")
         return False, f"Модель {llm_model} отсутствует в Ollama. Выполните: ollama create {llm_model} -f Modelfile.qwen14b"
 
-    report("✅ Локальный автономный стек Ollama полностью готов к работе!")
+    report("[OK] Локальный автономный стек Ollama полностью готов к работе!")
     return True, "Ollama готова к работе"
 
 
@@ -494,10 +522,24 @@ def get_docker_cli_path() -> Optional[str]:
 
 
 def start_docker_compose() -> Tuple[bool, str]:
-    """Запускает контейнеры через docker compose up -d."""
+    """Запускает контейнеры через docker compose up -d с предварительной проверкой WSL2."""
     docker_bin = get_docker_cli_path()
     if not docker_bin:
         return False, "Docker CLI не найден. Убедитесь, что Docker Desktop установлен."
+
+    # Проверка наличия WSL2 согласно стандарту GEMINI.md Rule 4
+    if sys.platform == "win32":
+        try:
+            wsl_check = subprocess.run(
+                ["wsl", "-l", "-q"],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                timeout=5
+            )
+            if wsl_check.returncode != 0:
+                return False, "В системе Windows не установлен WSL2. Docker Desktop требует WSL2 для работы. Выполните: wsl --install"
+        except Exception:
+            return False, "Подсистема WSL2 не найдена. Для работы Docker Desktop требуется WSL2: выполните wsl --install"
 
     try:
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0

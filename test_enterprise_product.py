@@ -14,7 +14,7 @@ if sys.platform == "win32":
         pass
 
 print("=" * 60)
-print("  ТЕСТИРОВАНИЕ АВТОНОМНОГО КОРПОРАТИВНОГО RAG")
+print("  ТЕСТИРОВАНИЕ АВТОНОМНОГО КОМПЛЕКСА EXSCIO")
 print("=" * 60)
 
 # 1. Проверка модулей
@@ -23,7 +23,7 @@ import dotenv
 dotenv.load_dotenv(override=True)
 import server_manager
 from rag_engine import RAGPipeline, sanitize_llm_output, CONFIG
-print("  [✓] server_manager и rag_engine успешно импортированы.")
+print("  [OK] server_manager и rag_engine успешно импортированы.")
 
 # 2. Проверка доступности активного локального сервера и моделей
 provider = os.getenv("LLM_PROVIDER", "LM_STUDIO").upper()
@@ -37,7 +37,7 @@ if "OLLAMA" in provider:
     print(f"  Доступные модели в Ollama: {loaded}")
     assert any("qwen" in m.lower() for m in loaded), "Модель qwen2.5 должна быть в Ollama!"
     assert any("nomic" in m.lower() or "embed" in m.lower() for m in loaded), "Модель nomic-embed-text должна быть в Ollama!"
-    print("  [✓] Обе модели (LLM + Эмбеддинги) доступны в Ollama.")
+    print("  [OK] Обе модели (LLM + Эмбеддинги) доступны в Ollama.")
 else:
     online = server_manager.is_server_online()
     print(f"  Статус сервера LM Studio: {'В СЕТИ 🟢' if online else 'ОФФЛАЙН 🔴'}")
@@ -46,7 +46,7 @@ else:
     print(f"  Загруженные модели в памяти: {loaded}")
     assert any("qwen" in m.lower() for m in loaded), "Модель qwen2.5 должна быть в памяти LM Studio!"
     assert any("nomic" in m.lower() or "embed" in m.lower() for m in loaded), "Модель nomic-embed-text должна быть в памяти LM Studio!"
-    print("  [✓] Обе модели (LLM + Эмбеддинги) активны в GPU.")
+    print("  [OK] Обе модели (LLM + Эмбеддинги) активны в GPU.")
 
 # 3. Проверка CJK-санитайзера
 print("\n[3/5] Проверка CJK-санитайзера...")
@@ -55,7 +55,7 @@ cleaned = sanitize_llm_output(test_dirty)
 assert "第" not in cleaned and "校" not in cleaned, "Иероглифы должны быть удалены!"
 assert "Согласно правилам школы" in cleaned and "форма должна быть классической" in cleaned
 print(f"  Очищенный текст: {cleaned}")
-print("  [✓] CJK-санитайзер работает на 100%.")
+print("  [OK] CJK-санитайзер работает на 100%.")
 
 # 4. Сквозной RAG запрос
 print("\n[4/5] Выполнение сквозного запроса через пайплайн...")
@@ -71,14 +71,14 @@ for c in resp.citations[:2]:
 
 assert len(resp.answer.strip()) > 10, "Ответ модели не должен быть пустым!"
 assert len(resp.citations) > 0, "Должны присутствовать подтверждающие первоисточники!"
-print("  [✓] Сквозной RAG-ответ получен корректно.")
+print("  [OK] Сквозной RAG-ответ получен корректно.")
 
 # 5. Проверка файлов презентации и запуска
 print("\n[5/5] Проверка файлов поставки продукта...")
 required_files = ["rag_gui.py", "server_manager.py", "run_app.py", "start_rag.bat", "PRODUCT_MANUAL.md", "rag_index.json"]
 for rf in required_files:
     assert Path(rf).exists(), f"Файл {rf} должен существовать!"
-    print(f"  [✓] {rf} присутствует.")
+    print(f"  [OK] {rf} присутствует.")
 
 print("\n" + "=" * 60)
 print("  ВСЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ! ПРОДУКТ ГОТОВ К ДЕМОНСТРАЦИИ.")

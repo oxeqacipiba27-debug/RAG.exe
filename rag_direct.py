@@ -140,7 +140,7 @@ def build_index(target_path: Path = None):
 
     use_embeddings = check_embedding_support()
     if use_embeddings:
-        print("\n[✓] LM Studio поддерживает режим эмбеддингов. Используем векторный поиск.", flush=True)
+        print("\n[OK] LM Studio поддерживает режим эмбеддингов. Используем векторный поиск.", flush=True)
     else:
         print("\n[i] В LM Studio загружена модель генерации текста (без /embeddings).", flush=True)
         print("    Используем интеллектуальный полнотекстовый поиск (BM25/TF-IDF).", flush=True)

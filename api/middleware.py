@@ -1,5 +1,5 @@
 """
-schoolX/api/middleware.py — Middleware аутентификации, логирования и обработки ошибок.
+api/middleware.py — Middleware аутентификации, логирования и обработки ошибок.
 """
 
 import os
@@ -37,9 +37,9 @@ async def verify_api_key(
     if not configured_key:
         return
 
-    # Разрешаем запросы к health check и документации без ключа
+    # Разрешаем запросы к health check, документации и виджету без ключа
     path = request.url.path
-    if path in ("/health", "/api/v1/health", "/docs", "/openapi.json", "/redoc"):
+    if path in ("/health", "/api/v1/health", "/docs", "/openapi.json", "/redoc", "/widget", "/widget.js") or path.startswith("/static/"):
         return
 
     provided_key = None

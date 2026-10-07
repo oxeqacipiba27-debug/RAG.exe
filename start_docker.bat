@@ -1,10 +1,17 @@
 @echo off
 chcp 65001 >nul
-title RAG - Запуск Docker стека (Ollama + Open WebUI)
+title EXSCIO (Docker Stack)
+cd /d "%~dp0"
 
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%"
+:: Проверка аргумента отладки (--console / -c)
+if "%~1"=="--console" goto CONSOLE_MODE
+if "%~1"=="-c" goto CONSOLE_MODE
 
+:: Запуск в скрытом режиме без открытия консольных окон
+wscript.exe "%~dp0start_docker.vbs"
+exit
+
+:CONSOLE_MODE
 set "PATH=%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin;C:\Program Files\Docker\Docker\resources\bin;%PATH%"
 
 echo ====================================================================
@@ -26,13 +33,13 @@ docker compose up -d
 
 if %ERRORLEVEL% equ 0 (
     echo.
-    echo [✓] Контейнеры успешно запущены в фоне!
+    echo [OK] Контейнеры успешно запущены в фоне!
     echo     - Ollama API : http://localhost:11434
     echo     - Open WebUI : http://localhost:3000
     echo.
 ) else (
     echo.
-    echo [!] Ошибка запуска Docker Compose.
+    echo [X] Ошибка запуска Docker Compose.
     echo     Убедитесь, что приложение Docker Desktop запущено.
     echo.
 )

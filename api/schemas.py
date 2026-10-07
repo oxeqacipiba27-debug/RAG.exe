@@ -1,5 +1,5 @@
 """
-schoolX/api/schemas.py — Pydantic-схемы для REST API и SSE эндпоинтов RAG-системы.
+api/schemas.py — Pydantic-схемы для REST API и SSE эндпоинтов RAG-системы.
 """
 
 from typing import Any, Dict, List, Optional, Union
@@ -17,6 +17,13 @@ class TelegramMessageRequest(BaseModel):
     message_id: Optional[Union[str, int]] = Field(None, description="ID исходного сообщения в Telegram")
     query: str = Field(..., min_length=1, description="Текст вопроса пользователя")
     session_id: Optional[str] = Field(None, description="Опциональный внешний UUID сессии")
+
+
+class WebChatMessageRequest(BaseModel):
+    """Универсальное тело запроса от веб-сайта, виджета или мобильного приложения."""
+    query: str = Field(..., min_length=1, description="Текст вопроса пользователя")
+    session_id: Optional[str] = Field(None, description="ID сессии диалога (хранится в localStorage)")
+    user_id: Optional[str] = Field(None, description="Идентификатор пользователя на сайте")
 
 
 class SourceCitation(BaseModel):

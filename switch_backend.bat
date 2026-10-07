@@ -1,16 +1,18 @@
 @echo off
 chcp 65001 >nul
-title RAG - Переключение бэкенда (LM Studio / Ollama / Docker)
+title EXSCIO - Диспетчер бэкендов
+cd /d "%~dp0"
 
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%"
+:: Проверка аргумента отладки (--console / -c / --cli)
+if "%~1"=="--console" goto CONSOLE_MODE
+if "%~1"=="-c" goto CONSOLE_MODE
+if "%~1"=="--cli" goto CONSOLE_MODE
 
-if exist "%SCRIPT_DIR%venv\Scripts\python.exe" (
-    set "PYTHON_EXE=%SCRIPT_DIR%venv\Scripts\python.exe"
-) else (
-    set "PYTHON_EXE=python"
-)
+:: Запуск графического окна диспетчера без терминала
+wscript.exe "%~dp0switch_backend.vbs"
+exit
 
-"%PYTHON_EXE%" "%SCRIPT_DIR%switch_backend.py"
-
-pause
+:CONSOLE_MODE
+set PY_CMD=python
+if exist "venv\Scripts\python.exe" set PY_CMD=venv\Scripts\python.exe
+"%PY_CMD%" switch_backend.py --cli
