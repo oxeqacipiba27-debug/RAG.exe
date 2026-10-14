@@ -1,0 +1,46 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+*.local
+*.lock
+*.pem
+*.key
+*.cert
+
+# RAG Large Storage & Vector Index (Read-only data, delivered separately)
+rag_index.json
+*.json.bak
+*.tmp*
+
+# Knowledge Base Raw Data & Scraped Files
+data/*
+!data/.gitkeep
+pdf saver/
+scratch/
+
+# Logs & Temporary Files
+logs/
+*.log
+*.tmp
+app.log
+
+# System & IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.lnk
