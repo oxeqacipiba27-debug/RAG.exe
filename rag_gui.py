@@ -335,12 +335,19 @@ index_exists = index_info["exists"]
 llm_model = DEFAULT_LLM_MODEL
 embed_model = DEFAULT_EMBED_MODEL
 if server_online and available_models:
-    llm_candidates = [m for m in available_models if not ("embed" in m.lower() or "nomic" in m.lower())]
-    if llm_candidates:
-        llm_model = llm_candidates[0]
-    emb_candidates = [m for m in available_models if "embed" in m.lower() or "nomic" in m.lower()]
-    if emb_candidates:
-        embed_model = emb_candidates[0]
+    if DEFAULT_LLM_MODEL in available_models:
+        llm_model = DEFAULT_LLM_MODEL
+    else:
+        llm_candidates = [m for m in available_models if not ("embed" in m.lower() or "nomic" in m.lower())]
+        if llm_candidates:
+            llm_model = llm_candidates[0]
+
+    if DEFAULT_EMBED_MODEL in available_models:
+        embed_model = DEFAULT_EMBED_MODEL
+    else:
+        emb_candidates = [m for m in available_models if "embed" in m.lower() or "nomic" in m.lower()]
+        if emb_candidates:
+            embed_model = emb_candidates[0]
 
 
 # =====================================================================
@@ -642,10 +649,12 @@ if mode == "💬 Чат с документами":
                     }
 
                     raw_response = ""
+                    stream_error: Optional[str] = None
                     with pipeline.client.stream("POST", "/chat/completions", json=payload, timeout=90.0) as stream_resp:
                         if stream_resp.status_code != 200:
-                            err_msg = f"Ошибка генерации ответа [{stream_resp.status_code}]: {stream_resp.read().decode('utf-8', errors='ignore')}"
-                            message_placeholder.error(err_msg)
+                            err_body = stream_resp.read().decode('utf-8', errors='ignore')
+                            stream_error = f"Ошибка генерации ответа [{stream_resp.status_code}]: {err_body}"
+                            message_placeholder.error(stream_error)
                         else:
                             for line in stream_resp.iter_lines():
                                 if not line:
@@ -664,34 +673,58 @@ if mode == "💬 Чат с документами":
                                     except Exception:
                                         pass
 
-                    final_sanitized = sanitize_llm_output(raw_response)
-                    message_placeholder.markdown(final_sanitized)
+                    if stream_error:
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": f"⚠️ {stream_error}",
+                            "reasoning": reasoning_info,
+                            "citations": []
+                        })
+                    elif not raw_response.strip():
+                        empty_msg = "⚠️ Основной сервер вернул пустой ответ. Проверьте состояние модели на сервере."
+                        message_placeholder.warning(empty_msg)
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": empty_msg,
+                            "reasoning": reasoning_info,
+                            "citations": []
+                        })
+                    else:
+                        final_sanitized = sanitize_llm_output(raw_response)
+                        message_placeholder.markdown(final_sanitized)
 
-                    citations_data = []
-                    no_info_phrases = ["нет информации", "в документах нет", "нет ответа", "не могу ответить"]
-                    used_context = not any(p in final_sanitized.lower() for p in no_info_phrases)
+                        citations_data = []
+                        no_info_phrases = ["нет информации", "в документах нет", "нет ответа", "не могу ответить"]
+                        used_context = not any(p in final_sanitized.lower() for p in no_info_phrases)
 
-                    if accepted_hits and used_context:
-                        for h in accepted_hits:
-                            citations_data.append({
-                                "source": h.chunk.metadata.source,
-                                "page": h.chunk.metadata.page,
-                                "quote": h.chunk.text[:300]
-                            })
-                        with st.expander(f"📄 Подтверждающие первоисточники ({len(citations_data)} фрагментов)"):
-                            for idx, c in enumerate(citations_data, 1):
-                                st.markdown(f"**[{idx}]** `{c['source']}` *(Страница {c['page']})*")
-                                st.code(c["quote"], language="text")
+                        if accepted_hits and used_context:
+                            for h in accepted_hits:
+                                citations_data.append({
+                                    "source": h.chunk.metadata.source,
+                                    "page": h.chunk.metadata.page,
+                                    "quote": h.chunk.text[:300]
+                                })
+                            with st.expander(f"📄 Подтверждающие первоисточники ({len(citations_data)} фрагментов)"):
+                                for idx, c in enumerate(citations_data, 1):
+                                    st.markdown(f"**[{idx}]** `{c['source']}` *(Страница {c['page']})*")
+                                    st.code(c["quote"], language="text")
 
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": final_sanitized,
-                        "reasoning": reasoning_info,
-                        "citations": citations_data if used_context else []
-                    })
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": final_sanitized,
+                            "reasoning": reasoning_info,
+                            "citations": citations_data if used_context else []
+                        })
 
             except Exception as e:
-                message_placeholder.error(f"Сбой при выполнении запроса: {e}")
+                err_text = f"Сбой при выполнении запроса: {e}"
+                message_placeholder.error(err_text)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"⚠️ {err_text}",
+                    "reasoning": "Сбой сетевого соединения или обработки запроса.",
+                    "citations": []
+                })
 
 
 # =====================================================================

@@ -48,6 +48,9 @@ try:
 except Exception:
     HAS_WEBVIEW = False
 
+APP_DIR = Path(__file__).resolve().parent
+os.chdir(APP_DIR)
+
 import dotenv
 dotenv.load_dotenv(override=True)
 
@@ -57,11 +60,11 @@ os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 CLIENT_PORT = int(os.getenv("CLIENT_PORT", "8501"))
 APP_URL = f"http://localhost:{CLIENT_PORT}"
-MAIN_SERVER_URL = os.getenv("MAIN_SERVER_URL", os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234/v1")).rstrip("/")
+MAIN_SERVER_URL = os.getenv("MAIN_SERVER_URL", os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234/v1")).strip().rstrip("/")
 if not MAIN_SERVER_URL.endswith("/v1"):
     MAIN_SERVER_URL += "/v1"
 
-ICON_PATH = "rag_icon.ico" if os.path.exists("rag_icon.ico") else None
+ICON_PATH = str(APP_DIR / "rag_icon.ico") if (APP_DIR / "rag_icon.ico").exists() else None
 
 
 def free_port(port: int = CLIENT_PORT):
@@ -302,13 +305,21 @@ def cleanup():
     print("\n[i] Завершение работы клиента...")
     if proc is not None:
         try:
-            proc.terminate()
-            proc.wait(timeout=3)
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            else:
+                proc.terminate()
+                proc.wait(timeout=3)
         except Exception:
             try:
                 proc.kill()
             except Exception:
                 pass
+    free_port(CLIENT_PORT)
 
 
 def signal_handler(signum, frame):
@@ -353,9 +364,10 @@ def startup_worker(splash: ClientSplashWindow):
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
         proc = subprocess.Popen(
-            [sys.executable, "-m", "streamlit", "run", "rag_gui.py", "--server.port", str(CLIENT_PORT), "--server.headless", "true"],
+            [sys.executable, "-m", "streamlit", "run", str(APP_DIR / "rag_gui.py"), "--server.port", str(CLIENT_PORT), "--server.headless", "true"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            cwd=str(APP_DIR),
             creationflags=creationflags
         )
 
@@ -387,17 +399,36 @@ def main():
     use_console = ("--console" in args or "-c" in args)
     no_splash = ("--no-splash" in args or os.environ.get("EXSCIO_NO_SPLASH") == "1")
 
+    index_path = APP_DIR / os.getenv("INDEX_FILE", "rag_index.json")
+
     print("=" * 60)
     print("  EXSCIO RAG Client Edition")
     print(f"  Основной сервер инференса: [{MAIN_SERVER_URL}]")
+    if index_path.exists():
+        print(f"  База знаний: [{index_path.name}] ({index_path.stat().st_size / (1024*1024):.1f} МБ) [Read-Only 🔒]")
+    else:
+        print(f"  [!] База знаний: [{index_path.name}] отсутствует в каталоге")
     print("=" * 60)
 
     if use_console or no_splash:
         free_port(CLIENT_PORT)
+        # Проверка доступности основного сервера в консольном режиме
+        try:
+            with httpx.Client(timeout=3.0, trust_env=False) as client:
+                r = client.get(f"{MAIN_SERVER_URL}/models")
+                if r.status_code == 200:
+                    models = [m["id"] for m in r.json().get("data", []) if "id" in m]
+                    print(f"  [OK] Связь с основным сервером установлена (моделей: {len(models)})")
+                else:
+                    print(f"  [!] Основной сервер ответил кодом: {r.status_code}")
+        except Exception as e:
+            print(f"  [!] Предупреждение: Сервер {MAIN_SERVER_URL} не ответил ({e})")
+
         global proc
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         proc = subprocess.Popen(
-            [sys.executable, "-m", "streamlit", "run", "rag_gui.py", "--server.port", str(CLIENT_PORT), "--server.headless", "true"],
+            [sys.executable, "-m", "streamlit", "run", str(APP_DIR / "rag_gui.py"), "--server.port", str(CLIENT_PORT), "--server.headless", "true"],
+            cwd=str(APP_DIR),
             creationflags=creationflags
         )
 
@@ -414,13 +445,27 @@ def main():
 
         if not ready:
             print("[!] Предупреждение: Сервер долго отвечает...")
+        else:
+            print(f"  [OK] Веб-сервер Streamlit готов: {APP_URL}")
     else:
         splash = ClientSplashWindow(server_url=MAIN_SERVER_URL)
         splash.run(startup_worker)
 
     # Отображение окна приложения
+    no_gui = ("--headless" in args or os.environ.get("EXSCIO_NO_GUI") == "1")
+    force_browser = ("--browser" in args or os.environ.get("EXSCIO_BROWSER") == "1")
+
+    if no_gui:
+        print("[i] Работа в фоновом/headless режиме (без открытия окна GUI)...")
+        try:
+            if proc:
+                proc.wait()
+        except KeyboardInterrupt:
+            pass
+        return
+
     try:
-        if HAS_WEBVIEW:
+        if HAS_WEBVIEW and not force_browser:
             try:
                 print("[OK] Открытие нативного окна EXSCIO Client...")
                 window = webview.create_window(

@@ -192,6 +192,11 @@ class AppConfig:
             else:
                 self.llm_base_url = "http://localhost:1234/v1"
 
+        if self.llm_base_url:
+            self.llm_base_url = self.llm_base_url.strip().rstrip("/")
+            if not self.llm_base_url.endswith("/v1"):
+                self.llm_base_url += "/v1"
+
         if not self.llm_model:
             if self.llm_provider == "LM_STUDIO":
                 self.llm_model = "qwen2.5-14b-instruct-1m"
@@ -202,6 +207,11 @@ class AppConfig:
 
         if not self.embedding_base_url:
             self.embedding_base_url = self.llm_base_url
+
+        if self.embedding_base_url:
+            self.embedding_base_url = self.embedding_base_url.strip().rstrip("/")
+            if not self.embedding_base_url.endswith("/v1"):
+                self.embedding_base_url += "/v1"
 
         if not self.embedding_api_key:
             self.embedding_api_key = self.llm_api_key
@@ -835,7 +845,9 @@ class DenseVectorStore:
         cfg = config or CONFIG
         self.provider = (provider or cfg.embedding_provider).upper()
         self.model_name = model_name or cfg.embedding_model
-        self.base_url = base_url or cfg.embedding_base_url
+        self.base_url = (base_url or cfg.embedding_base_url).strip().rstrip("/")
+        if self.base_url and not self.base_url.endswith("/v1"):
+            self.base_url += "/v1"
         self.api_key = api_key or cfg.embedding_api_key
         self.st_model_name = sentence_transformer_model or cfg.sentence_transformer_model
         self.device_preference = (device or cfg.embedding_device or "cpu").lower()
@@ -1203,7 +1215,7 @@ class HybridRetriever:
         # 4. Multi-Feature Reranking
         is_clothing_query = any(w in reformulated_query for w in ['форм', 'одежд', 'стил', 'внешн', 'дресс', 'носить', 'цвет', 'костюм', 'брюк', 'блузк', 'юбк', 'сарафан', 'обув', 'джинс', 'сменк', 'спорт', 'физкульт'])
         
-        q_lower = raw_query.lower()
+        q_lower = target_q.lower()
         is_school_overview = any(
             t in q_lower for t in [
                 'общая сводка', 'сводка по документам', 'об организации', 'про организацию', 'знаешь об организации',
@@ -1287,7 +1299,7 @@ class HybridRetriever:
 
         if not reranked_hits or reranked_hits[0].rerank_score < confidence_threshold:
             logger.info(f"Zero Retrieval: максимальный скор {reranked_hits[0].rerank_score if reranked_hits else 0.0:.4f} < {confidence_threshold}")
-            log_retrieval_debug([], raw_query)
+            log_retrieval_debug([], target_q)
             return [], reformulated_query, True
 
         filtered_hits: List[RetrievalHit] = []
@@ -1304,7 +1316,7 @@ class HybridRetriever:
             h.final_rank = idx
 
         # Детальная отладка выдачи Retriever в консоль разработчика
-        log_retrieval_debug(filtered_hits, raw_query, top_display=min(len(filtered_hits), 6))
+        log_retrieval_debug(filtered_hits, target_q, top_display=min(len(filtered_hits), 6))
 
         return filtered_hits, reformulated_query, False
 
@@ -1631,16 +1643,28 @@ class RAGPipeline:
         if embed_model is not None:
             self.config.embedding_model = embed_model
         if base_url is not None:
-            self.config.llm_base_url = base_url
-            self.config.embedding_base_url = base_url
-            if "11434" in base_url:
+            norm_url = base_url.strip().rstrip("/")
+            if not norm_url.endswith("/v1"):
+                norm_url += "/v1"
+            self.config.llm_base_url = norm_url
+            self.config.embedding_base_url = norm_url
+            if "11434" in norm_url:
                 self.config.llm_provider = "OLLAMA_LOCAL"
                 self.config.llm_api_key = "ollama"
                 self.config.embedding_api_key = "ollama"
                 if not embed_model or "text-embedding-nomic" in self.config.embedding_model:
                     self.config.embedding_model = "nomic-embed-text"
-            elif "1234" in base_url:
+            elif "1234" in norm_url:
                 self.config.llm_provider = "LM_STUDIO"
+
+        if self.config.llm_base_url:
+            self.config.llm_base_url = self.config.llm_base_url.strip().rstrip("/")
+            if not self.config.llm_base_url.endswith("/v1"):
+                self.config.llm_base_url += "/v1"
+        if self.config.embedding_base_url:
+            self.config.embedding_base_url = self.config.embedding_base_url.strip().rstrip("/")
+            if not self.config.embedding_base_url.endswith("/v1"):
+                self.config.embedding_base_url += "/v1"
 
         self.index_file = self.config.index_file
         self.llm_model = self.config.llm_model
@@ -1750,6 +1774,10 @@ class RAGPipeline:
         3. Атомарное замещение целевого файла через os.replace().
         4. Гарантированная очистка временного файла при любой ошибке.
         """
+        if os.getenv("CLIENT_EDITION", "true").lower() in ("true", "1", "yes"):
+            logger.warning("[CLIENT READ-ONLY] Сохранение индекса заблокировано в клиентской версии EXSCIO.")
+            return False
+
         target_path = Path(self.index_file).resolve()
         temp_path = target_path.with_name(f"{target_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
         logger.info(f"Сохранение индекса во временный файл {temp_path.name}...")

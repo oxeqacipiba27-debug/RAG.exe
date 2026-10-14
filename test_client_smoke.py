@@ -98,6 +98,55 @@ def test_read_only_index_and_hybrid_search():
     print(f"  [OK] RRF Score: {top_hit.rrf_score:.5f}, Dense: {top_hit.dense_score:.4f}, BM25: {top_hit.sparse_score:.2f}")
 
 
+def test_search_query_kwarg_and_edge_cases():
+    print("\n[TEST 6] Проверка граничных случаев поиска (kwarg query, пустой запрос)...")
+    from rag_engine import RAGPipeline
+    index_file = Path("rag_index.json")
+    if not index_file.exists():
+        print("  [!] rag_index.json отсутствует в каталоге, проверка пропущена.")
+        return
+
+    pipeline = RAGPipeline(index_file=str(index_file))
+
+    # 1. Поиск через именованный параметр query (вместо raw_query)
+    hits, ref_q, is_z = pipeline.retriever.search(query="одежда", top_k=2)
+    assert not is_z, "Поиск по query='одежда' вернул Zero-Retrieval"
+    assert len(hits) > 0, "Не найдены результаты по query='одежда'"
+    print("  [OK] Поиск через параметр query= успешно выполнен без ошибок.")
+
+    # 2. Поиск с пустым запросом
+    empty_hits, _, is_empty_z = pipeline.retriever.search(raw_query="", top_k=2)
+    assert is_empty_z or len(empty_hits) == 0, "Пустой запрос должен возвращать пустой результат"
+    print("  [OK] Пустой поисковый запрос корректно обработан.")
+
+
+def test_url_normalization():
+    print("\n[TEST 7] Проверка нормализации URL основного сервера...")
+    from rag_engine import AppConfig
+    # Проверка нормализации URL без суффикса /v1
+    orig = os.environ.get("MAIN_SERVER_URL")
+    try:
+        os.environ["MAIN_SERVER_URL"] = "http://192.168.1.55:1234"
+        cfg = AppConfig()
+        assert cfg.llm_base_url == "http://192.168.1.55:1234/v1", f"URL не нормализован: {cfg.llm_base_url}"
+        assert cfg.embedding_base_url == "http://192.168.1.55:1234/v1", f"Embedding URL не нормализован: {cfg.embedding_base_url}"
+        print(f"  [OK] URL без /v1 корректно приведен к: {cfg.llm_base_url}")
+    finally:
+        if orig is not None:
+            os.environ["MAIN_SERVER_URL"] = orig
+        else:
+            os.environ.pop("MAIN_SERVER_URL", None)
+
+
+def test_read_only_save_blocked():
+    print("\n[TEST 8] Проверка защиты от модификации базы знаний (Read-Only safeguard)...")
+    from rag_engine import RAGPipeline
+    pipeline = RAGPipeline()
+    res = pipeline.save_index()
+    assert res is False, "save_index должен возвращать False и блокировать запись в клиентской версии!"
+    print("  [OK] Запись в базу знаний успешно заблокирована защитным механизмом.")
+
+
 def main():
     print("=" * 60)
     print("  EXSCIO RAG Client Edition — Smoke Test Suite")
@@ -108,6 +157,9 @@ def main():
     test_main_server_connectivity()
     test_cjk_sanitizer()
     test_read_only_index_and_hybrid_search()
+    test_search_query_kwarg_and_edge_cases()
+    test_url_normalization()
+    test_read_only_save_blocked()
 
     print("\n" + "=" * 60)
     print("  [ALL TESTS PASSED] Клиентская версия полностью верифицирована!")
