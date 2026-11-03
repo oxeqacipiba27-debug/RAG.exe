@@ -189,6 +189,8 @@ class AppConfig:
                 self.llm_base_url = "http://localhost:11434/v1"
             elif self.llm_provider == "DOCKER":
                 self.llm_base_url = "http://host.docker.internal:11434/v1"
+            elif self.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+                self.llm_base_url = "http://127.0.0.1:8000/v1"
             else:
                 self.llm_base_url = "http://localhost:1234/v1"
 
@@ -197,6 +199,8 @@ class AppConfig:
                 self.llm_model = "qwen2.5-14b-instruct-1m"
             elif self.llm_provider in ("OLLAMA_LOCAL", "DOCKER"):
                 self.llm_model = "qwen2.5:14b"
+            elif self.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+                self.llm_model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
             else:
                 self.llm_model = "qwen2.5-14b-instruct-1m"
 
@@ -209,6 +213,9 @@ class AppConfig:
         if self.llm_provider in ("OLLAMA_LOCAL", "DOCKER"):
             if not self.embedding_model or "text-embedding-nomic" in self.embedding_model:
                 self.embedding_model = "nomic-embed-text"
+        elif self.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+            if not self.embedding_model:
+                self.embedding_model = "nomic-embed-text-v1.5"
 
         # Валидация секретов (Fail-Fast в production)
         self.validate_secrets()
@@ -296,6 +303,14 @@ class BackendHealthChecker:
                 f"  5. Загрузите модель в контейнер: docker compose exec ollama ollama pull {model}",
                 "  6. Если скрипт работает на хосте, используйте адрес: http://localhost:11434/v1",
                 "     Если скрипт работает внутри Docker-сети, используйте: http://host.docker.internal:11434/v1 или http://ollama:11434/v1"
+            ])
+        elif provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+            lines.extend([
+                "  1. Убедитесь, что серверный ПК (Windows 11) включен или отправьте Wake-on-LAN: 'llm-ctl wake'.",
+                "  2. Если вы подключаетесь не из локальной сети, проверьте статус Tailscale ('tailscale status') или туннеля Cloudflare.",
+                "  3. Проверьте адрес хоста в ~/.config/llm-remote/config.env или .env (например: 100.x.y.z:8000 или https://tunnel.trycloudflare.com).",
+                "  4. Для тестирования без включения ПК запустите локальный Mock-сервер: 'llm-ctl start-mock' или через кнопку в GUI.",
+                "  5. Убедитесь, что модель загружена в память GPU (статус '󰚩 IDLE' означает, что VRAM свободна, переключите модель через 'llm-ctl switch <model.gguf>')."
             ])
         else:
             lines.extend([
@@ -841,8 +856,12 @@ class DenseVectorStore:
         self.device_preference = (device or cfg.embedding_device or "cpu").lower()
 
         # Сетевые клиенты для REMOTE режима
-        self.client = httpx.Client(base_url=self.base_url, timeout=45.0, trust_env=False)
-        self.openai_client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        emb_api_k = self.api_key or "not-needed"
+        headers = {}
+        if emb_api_k and emb_api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {emb_api_k}"
+        self.client = httpx.Client(base_url=self.base_url, headers=headers, timeout=45.0, trust_env=False)
+        self.openai_client = OpenAI(base_url=self.base_url, api_key=emb_api_k)
 
         # Локальная модель SentenceTransformer (инициализируется при первом требовании)
         self.st_model = None
@@ -1641,6 +1660,10 @@ class RAGPipeline:
                     self.config.embedding_model = "nomic-embed-text"
             elif "1234" in base_url:
                 self.config.llm_provider = "LM_STUDIO"
+            elif "8000" in base_url or os.getenv("LLM_PROVIDER") in ("RTX4070_REMOTE", "REMOTE_PC"):
+                self.config.llm_provider = "RTX4070_REMOTE"
+                if not embed_model or "text-embedding-nomic" in self.config.embedding_model:
+                    self.config.embedding_model = "nomic-embed-text-v1.5"
 
         self.index_file = self.config.index_file
         self.llm_model = self.config.llm_model
@@ -1648,9 +1671,14 @@ class RAGPipeline:
         self.base_url = self.config.llm_base_url
 
         # Унифицированный клиент OpenAI
-        self.openai_client = OpenAI(base_url=self.config.llm_base_url, api_key=self.config.llm_api_key)
+        api_k = self.config.llm_api_key or "not-needed"
+        self.openai_client = OpenAI(base_url=self.config.llm_base_url, api_key=api_k)
+
         # HTTPX клиент для прямой совместимости (включая стриминг в GUI)
-        self.client = httpx.Client(base_url=self.config.llm_base_url, timeout=90.0, trust_env=False)
+        headers = {}
+        if api_k and api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {api_k}"
+        self.client = httpx.Client(base_url=self.config.llm_base_url, headers=headers, timeout=90.0, trust_env=False)
 
         self.chunks: List[DocumentChunk] = []
         self.dense_store = DenseVectorStore(

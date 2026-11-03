@@ -1,0 +1,17 @@
+// ==============================================================================
+// Waybar Module Definition for Remote RTX 4070 LLM & RAG Infrastructure
+// Add "custom/llm" to "modules-right" (or "modules-left") in ~/.config/waybar/config.jsonc
+// and paste this block under the modules configuration:
+// ==============================================================================
+
+"custom/llm": {
+  "format": "{}",
+  "return-type": "json",
+  "exec": "$HOME/.local/bin/llm-ctl status",
+  "interval": 5,
+  "signal": 9,
+  "on-click": "$HOME/.local/bin/llm-ctl menu",
+  "on-click-right": "$HOME/.local/bin/llm-ctl unload",
+  "escape": true,
+  "tooltip": true
+}

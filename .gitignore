@@ -46,3 +46,20 @@ Thumbs.db
 pkg/
 src/
 *.pkg.tar.*
+
+# GGUF Model weights
+*.gguf
+**/*.gguf
+pc_server/models/*.gguf
+
+# Local unpack directory & legacy hardware experiments
+RAG.exe-linux/
+technolab*
+find_enable_pin/
+test_motor*
+diagnostic_robot.py
+99-technolab-arduino.rules
+run_motor_sequence.py
+run_technolab_pipeline.py
+TECHNOLAB_MANUAL.md
+

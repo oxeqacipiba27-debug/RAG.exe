@@ -31,13 +31,17 @@ ENV_FILE = ROOT_DIR / ".env"
 PROFILES = {
     "lmstudio": ROOT_DIR / ".env.lmstudio",
     "ollama": ROOT_DIR / ".env.ollama",
-    "docker": ROOT_DIR / ".env.docker"
+    "docker": ROOT_DIR / ".env.docker",
+    "rtx4070": ROOT_DIR / ".env.rtx4070",
+    "remote": ROOT_DIR / ".env.rtx4070"
 }
 
 PROFILE_NAMES = {
     "lmstudio": "LM Studio (http://localhost:1234/v1)",
     "ollama": "Ollama Native (http://localhost:11434/v1)",
-    "docker": "Docker Ollama Container (http://localhost:11434/v1)"
+    "docker": "Docker Ollama Container (http://localhost:11434/v1)",
+    "rtx4070": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000)",
+    "remote": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000)"
 }
 
 
@@ -54,6 +58,8 @@ def get_current_backend() -> str:
                     return "Ollama Native"
                 elif prov == "DOCKER":
                     return "Docker Container"
+                elif prov in ("RTX4070_REMOTE", "REMOTE_PC"):
+                    return "Remote RTX 4070 (ПК)"
                 return prov
     return "Неизвестен"
 
@@ -61,7 +67,7 @@ def get_current_backend() -> str:
 def switch_to(profile_key: str) -> bool:
     key = profile_key.lower().strip()
     if key not in PROFILES:
-        print(f"❌ Неизвестный профиль: '{profile_key}'. Доступны: lmstudio, ollama, docker")
+        print(f"❌ Неизвестный профиль: '{profile_key}'. Доступны: rtx4070, lmstudio, ollama, docker")
         return False
 
     source_path = PROFILES[key]
@@ -84,13 +90,14 @@ def interactive_menu():
     print("  [1] LM Studio             (http://localhost:1234/v1)")
     print("  [2] Ollama Native         (http://localhost:11434/v1)")
     print("  [3] Docker Container      (http://localhost:11434/v1)")
-    print("  [4] Проверить доступность (test_backends.py)")
-    print("  [5] Запустить RAG сейчас  (run_app.py)")
+    print("  [4] Remote RTX 4070 PC    (Tailscale / LAN / Cloudflare :8000)")
+    print("  [5] Проверить доступность (test_backends.py)")
+    print("  [6] Запустить RAG сейчас  (run_app.py)")
     print("  [0] Выход")
     print("=" * 65)
 
     try:
-        choice = input("Выберите вариант [0-5]: ").strip()
+        choice = input("Выберите вариант [0-6]: ").strip()
     except (EOFError, KeyboardInterrupt):
         return
 
@@ -101,11 +108,13 @@ def interactive_menu():
     elif choice == "3":
         switch_to("docker")
     elif choice == "4":
+        switch_to("rtx4070")
+    elif choice == "5":
         from test_backends import test_lm_studio, test_ollama_native, test_docker
         test_lm_studio()
         test_ollama_native()
         test_docker()
-    elif choice == "5":
+    elif choice == "6":
         import subprocess
         print("\n[i] Запуск приложения EXSCIO...")
         subprocess.run([sys.executable, str(ROOT_DIR / "run_app.py")])
@@ -124,6 +133,8 @@ if __name__ == "__main__":
             switch_to("ollama")
         elif target in ("3", "dk", "docker"):
             switch_to("docker")
+        elif target in ("4", "rtx", "rtx4070", "remote", "pc"):
+            switch_to("rtx4070")
         else:
             switch_to(target)
     else:

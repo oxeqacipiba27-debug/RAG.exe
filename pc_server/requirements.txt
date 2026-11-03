@@ -1,0 +1,13 @@
+# Windows 11 RTX 4070 PC Server Dependencies
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+httpx>=0.27.0
+numpy>=1.24.0
+psutil>=5.9.0
+
+# Optional high-performance GPU backends (installed automatically by setup_server.ps1):
+# For RTX 4070 with CUDA 12:
+# pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122
+# For sentence embeddings:
+# sentence-transformers>=2.6.0

@@ -362,7 +362,7 @@ h1, h2, h3, h4 {
 [data-testid="stBottom"] > div,
 [data-testid="stBottomBlockContainer"],
 .stBottomBlockContainer {
-    max-width: var(--chat-quarter-width) !important;
+    max-width: var(--chat-max-width) !important;
     width: 100% !important;
     margin-left: auto !important;
     margin-right: auto !important;
@@ -660,6 +660,7 @@ with st.sidebar:
     )
 
     backend_options = [
+        "⚡ Удаленный RTX 4070 (ПК / Любая сеть)",
         "🟣 LM Studio (локально)",
         "🦙 Ollama (нативно)",
         "🐳 Docker (контейнер)",
@@ -667,12 +668,18 @@ with st.sidebar:
     ]
 
     # Синхронизация с переменной окружения
-    env_prov = os.getenv("LLM_PROVIDER", "LM_STUDIO").upper()
+    env_prov = os.getenv("LLM_PROVIDER", "RTX4070_REMOTE").upper()
     initial_idx = 0
-    if "OLLAMA" in env_prov:
+    if "RTX" in env_prov or "REMOTE" in env_prov:
+        initial_idx = 0
+    elif "LM_STUDIO" in env_prov or "LM" in env_prov:
         initial_idx = 1
-    elif "DOCKER" in env_prov:
+    elif "OLLAMA" in env_prov:
         initial_idx = 2
+    elif "DOCKER" in env_prov:
+        initial_idx = 3
+    else:
+        initial_idx = 0
 
     selected_backend = st.selectbox(
         "Бэкенд",
@@ -682,7 +689,212 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
-    if selected_backend == "🟣 LM Studio (локально)":
+    if selected_backend == "⚡ Удаленный RTX 4070 (ПК / Любая сеть)":
+        rem_cfg = server_manager.get_llm_remote_config()
+
+        # 1. Выбор пресета подключения
+        preset_options = [
+            "🌐 Tailscale (P2P WireGuard — из любой сети)",
+            "🏠 Локальная сеть (LAN)",
+            "☁️ Cloudflare HTTPS Tunnel",
+            "🧪 Локальный Mock-сервер (127.0.0.1:8000)",
+            "✏️ Пользовательский адрес"
+        ]
+
+        cur_ip = rem_cfg.get("ip", "127.0.0.1")
+        preset_idx = 0
+        if cur_ip.startswith("100."):
+            preset_idx = 0
+        elif cur_ip.startswith("192.168.") or cur_ip.startswith("10."):
+            preset_idx = 1
+        elif "trycloudflare" in cur_ip or cur_ip.startswith("https://"):
+            preset_idx = 2
+        elif cur_ip in ("127.0.0.1", "localhost"):
+            preset_idx = 3
+        else:
+            preset_idx = 4
+
+        selected_preset = st.selectbox(
+            "Тип подключения",
+            options=preset_options,
+            index=preset_idx,
+            key="rtx4070_preset_select",
+            label_visibility="collapsed"
+        )
+
+        target_endpoint = cur_ip
+        target_port = int(rem_cfg.get("port", "8000"))
+
+        if "Tailscale" in selected_preset and not cur_ip.startswith("100."):
+            target_endpoint = rem_cfg.get("ip") if rem_cfg.get("ip", "").startswith("100.") else "100.84.120.45"
+            target_port = 8000
+        elif "Локальная сеть" in selected_preset and not (cur_ip.startswith("192.168.") or cur_ip.startswith("10.")):
+            target_endpoint = rem_cfg.get("real_ip", "192.168.1.100")
+            target_port = 8000
+        elif "Cloudflare" in selected_preset and not ("trycloudflare" in cur_ip or cur_ip.startswith("https://")):
+            target_endpoint = "https://your-tunnel.trycloudflare.com"
+            target_port = 443
+        elif "Mock-сервер" in selected_preset:
+            target_endpoint = "127.0.0.1"
+            target_port = 8000
+
+        col_ep1, col_ep2 = st.columns([3, 1])
+        with col_ep1:
+            cfg_endpoint = st.text_input(
+                "Хост / URL сервера",
+                value=target_endpoint,
+                key="rtx4070_input_host",
+                help="IP в Tailscale (100.x.y.z), локальный IP (192.168.1.x), туннель Cloudflare или 127.0.0.1"
+            )
+        with col_ep2:
+            cfg_port = st.number_input(
+                "Порт",
+                value=target_port,
+                min_value=1,
+                max_value=65535,
+                key="rtx4070_input_port"
+            )
+
+        cfg_api_key = st.text_input(
+            "API-ключ (если включен на сервере)",
+            value=rem_cfg.get("api_key", ""),
+            type="password",
+            key="rtx4070_input_apikey",
+            help="Bearer токен для защиты при доступе через внешний интернет"
+        )
+
+        rtx_base = server_manager.normalize_rtx4070_url(cfg_endpoint, int(cfg_port))
+        lm_studio_url = f"{rtx_base}/v1"
+        embed_model = "nomic-embed-text-v1.5"
+
+        is_rtx_online = server_manager.is_rtx4070_online(cfg_endpoint, int(cfg_port), timeout=0.6, api_key=cfg_api_key)
+        health_info = server_manager.get_rtx4070_health(cfg_endpoint, int(cfg_port), timeout=0.8, api_key=cfg_api_key) if is_rtx_online else {}
+        active_llm = health_info.get("loaded_llm")
+        ctx_tokens = health_info.get("ctx_size", 16384)
+
+        if is_rtx_online and active_llm:
+            llm_model = active_llm
+            st.markdown(
+                f"""
+                <div style="background: rgba(48, 209, 88, 0.12); border: 1px solid #30d158; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+                    <div style="font-size: 12px; font-weight: 700; color: #30d158; display: flex; align-items: center; gap: 6px;">
+                        <span>🟢</span><span>RTX 4070 в сети (VRAM активна)</span>
+                    </div>
+                    <div style="font-size: 11px; color: #f2f4f8; margin-top: 4px; font-weight: 600;">{active_llm}</div>
+                    <div style="font-size: 10px; color: #8b949e; margin-top: 2px;">Контекст: {ctx_tokens} токенов | Nomic Embed 768-D</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            available_models = server_manager.get_rtx4070_models(cfg_endpoint, int(cfg_port), api_key=cfg_api_key)
+            if not available_models:
+                available_models = [active_llm]
+
+            cur_model_idx = available_models.index(active_llm) if active_llm in available_models else 0
+            selected_model_to_load = st.selectbox(
+                "Сменить модель в VRAM",
+                options=available_models,
+                index=cur_model_idx,
+                key="rtx4070_model_switcher"
+            )
+
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                if st.button("🔄 Сменить модель", key="btn_switch_rtx_model", use_container_width=True):
+                    with st.spinner("Загрузка модели в память RTX 4070..."):
+                        ok, msg = server_manager.switch_rtx4070_model(cfg_endpoint, selected_model_to_load, ctx_size=ctx_tokens, port=int(cfg_port), api_key=cfg_api_key)
+                        if ok:
+                            st.success(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+            with col_m2:
+                if st.button("❄️ Выгрузить VRAM", key="btn_unload_rtx_vram", use_container_width=True, help="Освободить 12 ГБ VRAM видеокарты"):
+                    with st.spinner("Освобождение VRAM..."):
+                        ok, msg = server_manager.unload_rtx4070_vram(cfg_endpoint, port=int(cfg_port), api_key=cfg_api_key)
+                        if ok:
+                            st.info(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+        elif is_rtx_online and not active_llm:
+            st.markdown(
+                """
+                <div style="background: rgba(255, 159, 10, 0.12); border: 1px solid #ff9f0a; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+                    <div style="font-size: 12px; font-weight: 700; color: #ff9f0a; display: flex; align-items: center; gap: 6px;">
+                        <span>🟡</span><span>RTX 4070 в сети (VRAM свободна / IDLE)</span>
+                    </div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Видеокарта в покое. Выберите модель для загрузки в GPU:</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            available_models = server_manager.get_rtx4070_models(cfg_endpoint, int(cfg_port), api_key=cfg_api_key)
+            if not available_models:
+                available_models = ["Qwen2.5-14B-Instruct-Q4_K_M.gguf", "Llama-3.1-8B-Instruct-Q8_0.gguf"]
+
+            chosen_idle_model = st.selectbox("Модель для загрузки", options=available_models, key="rtx4070_idle_model")
+            if st.button("⚡ Загрузить модель в GPU VRAM", key="btn_load_idle_model", use_container_width=True):
+                with st.spinner(f"Загрузка {chosen_idle_model} в VRAM..."):
+                    ok, msg = server_manager.switch_rtx4070_model(cfg_endpoint, chosen_idle_model, port=int(cfg_port), api_key=cfg_api_key)
+                    if ok:
+                        st.success(msg)
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            llm_model = chosen_idle_model
+
+        else:
+            st.markdown(
+                f"""
+                <div style="background: rgba(248, 81, 73, 0.12); border: 1px solid #f85149; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+                    <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
+                        <span>🔴</span><span>Сервер RTX 4070 недоступен</span>
+                    </div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">{rtx_base} не отвечает. Действия:</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            col_off1, col_off2 = st.columns(2)
+            with col_off1:
+                if st.button("⚡ Wake-on-LAN", key="btn_wol_rtx4070", use_container_width=True, help="Отправить магический пакет для включения ПК"):
+                    ok, msg = server_manager.wake_rtx4070(rem_cfg.get("mac", "00:11:22:33:44:55"))
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+            with col_off2:
+                if st.button("🧪 Старт Mock-сервера", key="btn_start_mock_rtx", use_container_width=True, help="Запустить локальный эмулятор 127.0.0.1:8000"):
+                    ok, msg = server_manager.start_rtx4070_mock()
+                    if ok:
+                        st.success(msg)
+                        time.sleep(0.8)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+            if st.button("🔄 Проверить статус соединения", key="btn_recheck_rtx4070", use_container_width=True):
+                st.rerun()
+
+            llm_model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+
+        if st.button("💾 Сохранить активный адрес в .env и Waybar", key="btn_save_rtx_cfg", use_container_width=True):
+            ok, msg = server_manager.save_rtx4070_settings(cfg_endpoint, int(cfg_port), cfg_api_key, default_model=llm_model)
+            if ok:
+                st.success(msg)
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    elif selected_backend == "🟣 LM Studio (локально)":
         lm_studio_url = "http://127.0.0.1:1234/v1"
         embed_model = "text-embedding-nomic-embed-text-v1.5"
 

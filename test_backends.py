@@ -170,6 +170,36 @@ def test_docker():
         return False
 
 
+def test_rtx4070_remote() -> bool:
+    print("\n" + "=" * 65)
+    print("⚡ [4/4] Проверка бэкенда: REMOTE RTX 4070 PC (:8000)")
+    print("=" * 65)
+    import server_manager
+    rem_cfg = server_manager.get_llm_remote_config()
+    endpoint = rem_cfg.get("ip", "127.0.0.1")
+    port = int(rem_cfg.get("port", 8000))
+    api_k = rem_cfg.get("api_key", "")
+    base_url = server_manager.normalize_rtx4070_url(endpoint, port)
+
+    online = server_manager.is_rtx4070_online(endpoint, port, timeout=0.8, api_key=api_k)
+    if not online:
+        print(f"  Статус HTTP      : 🔴 ОФФЛАЙН / НЕ ОТВЕЧАЕТ ({base_url})")
+        print(f"  Рекомендация     : Отправьте WoL ('llm-ctl wake') или запустите Mock ('llm-ctl start-mock')")
+        return False
+
+    health = server_manager.get_rtx4070_health(endpoint, port, timeout=1.0, api_key=api_k)
+    active_llm = health.get("loaded_llm")
+    vram_status = f"🟢 МОДЕЛЬ В VRAM ({active_llm})" if active_llm else "🟡 VRAM СВОБОДНА (IDLE)"
+    print(f"  Статус HTTP      : 🟢 В СЕТИ ({base_url})")
+    print(f"  Память GPU       : {vram_status}")
+    print(f"  Контекст         : {health.get('ctx_size', 16384)} токенов")
+    print(f"  Эмбеддинги       : {'🟢 АКТИВНЫ (768-D Nomic)' if health.get('embedding_active') else '🟡 НЕАКТИВНЫ'}")
+
+    models = server_manager.get_rtx4070_models(endpoint, port, api_key=api_k)
+    print(f"  Доступные GGUF   : {models}")
+    return True
+
+
 if __name__ == "__main__":
     import server_manager
     print("╔═══════════════════════════════════════════════════════════════╗")
@@ -181,10 +211,12 @@ if __name__ == "__main__":
     lm_ok = test_lm_studio()
     ol_ok = test_ollama_native()
     dk_ok = test_docker()
+    rtx_ok = test_rtx4070_remote()
 
     print("\n" + "=" * 65)
     print("ИТОГОВЫЙ СТАТУС БЭКЕНДОВ:")
     print(f"  1. LM Studio     : {'ГОТОВ 🟢' if lm_ok else 'ОФФЛАЙН 🔴'}")
     print(f"  2. Ollama Native : {'ГОТОВ 🟢' if ol_ok else 'ОФФЛАЙН 🔴'}")
     print(f"  3. Docker Stack  : {'ГОТОВ 🟢' if dk_ok else 'ТРЕБУЕТСЯ СТАРТ ДЕМОНА 🟡'}")
+    print(f"  4. Remote RTX4070: {'ГОТОВ 🟢' if rtx_ok else 'ОФФЛАЙН 🔴 (Доступен WoL / Mock)'}")
     print("=" * 65)

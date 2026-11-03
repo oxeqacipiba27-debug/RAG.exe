@@ -62,6 +62,16 @@ __all__ = [
     "check_linux_gpu",
     "get_gpu_info",
     "get_gpu_summary",
+    "get_llm_remote_config",
+    "normalize_rtx4070_url",
+    "is_rtx4070_online",
+    "get_rtx4070_health",
+    "get_rtx4070_models",
+    "switch_rtx4070_model",
+    "unload_rtx4070_vram",
+    "wake_rtx4070",
+    "start_rtx4070_mock",
+    "save_rtx4070_settings",
 ]
 
 
@@ -267,6 +277,7 @@ def get_lms_cli_path() -> Optional[str]:
     home = Path(os.path.expanduser("~"))
     candidates = [
         # Linux Arch / AUR / Flatpak / AppImage standard paths
+        home / ".var" / "app" / "ai.lmstudio.lm-studio" / ".lmstudio" / "bin" / "lms",
         home / ".lmstudio" / "bin" / "lms",
         home / ".local" / "bin" / "lms",
         home / ".cache" / "lm-studio" / "bin" / "lms",
@@ -382,6 +393,12 @@ def start_local_server(port: int = DEFAULT_PORT, timeout_sec: int = 15) -> Tuple
             creationflags=creationflags
         )
         logger.info("Команда запуска завершена. Код: %d, Вывод: %s", proc.returncode, proc.stdout.strip() or proc.stderr.strip())
+
+        if proc.returncode != 0:
+            if is_server_online(f"http://127.0.0.1:{port}/v1", timeout=1.0):
+                return True, f"Сервер успешно запущен на порту {port}."
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            return False, f"Команда lms server start завершилась с кодом {proc.returncode}: {err_msg}"
 
         deadline = time.time() + timeout_sec
         while time.time() < deadline:
@@ -803,3 +820,288 @@ def stop_docker_compose() -> Tuple[bool, str]:
         return True, "Docker-контейнеры остановлены."
     except Exception as e:
         return False, f"Сбой вызова docker compose down: {e}"
+
+
+# ==============================================================================
+# УПРАВЛЕНИЕ УДАЛЕННЫМ СЕРВЕРОМ NVIDIA RTX 4070 (WINDOWS 11 / TAILSCALE / LAN)
+# ==============================================================================
+
+def get_llm_remote_config() -> Dict[str, str]:
+    """
+    Загружает конфигурацию удаленного сервера из ~/.config/llm-remote/config.env
+    с fallback на локальный .env или параметры по умолчанию.
+    """
+    config = {
+        "ip": "127.0.0.1",
+        "port": "8000",
+        "mac": "00:11:22:33:44:55",
+        "real_ip": "192.168.1.100",
+        "default_ctx": "16384",
+        "api_key": "",
+        "launcher": "rofi -dmenu -i -p 'RTX 4070'"
+    }
+
+    env_path = Path.home() / ".config" / "llm-remote" / "config.env"
+    if env_path.exists():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k == "LLM_SERVER_IP":
+                            config["ip"] = v
+                        elif k == "LLM_SERVER_PORT":
+                            config["port"] = v
+                        elif k == "LLM_SERVER_MAC":
+                            config["mac"] = v
+                        elif k == "REAL_SERVER_IP":
+                            config["real_ip"] = v
+                        elif k == "LLM_DEFAULT_CTX":
+                            config["default_ctx"] = v
+                        elif k == "LLM_API_KEY":
+                            config["api_key"] = v
+        except Exception as e:
+            logger.warning(f"Ошибка чтения {env_path}: {e}")
+
+    # Fallback на системные переменные окружения
+    if os.getenv("LLM_SERVER_IP"):
+        config["ip"] = os.getenv("LLM_SERVER_IP", config["ip"])
+    if os.getenv("LLM_SERVER_PORT"):
+        config["port"] = os.getenv("LLM_SERVER_PORT", config["port"])
+    if os.getenv("LLM_API_KEY"):
+        config["api_key"] = os.getenv("LLM_API_KEY", config["api_key"])
+
+    return config
+
+
+def normalize_rtx4070_url(endpoint: str, port: int = 8000) -> str:
+    """Приводит адрес к формату базового URL (http://host:port или https://tunnel)."""
+    raw = endpoint.strip()
+    if not raw:
+        return f"http://127.0.0.1:{port}"
+    if raw.startswith("http://") or raw.startswith("https://"):
+        url = raw.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
+        return url
+    if ":" in raw and not raw.startswith("100."):
+        parts = raw.split(":")
+        if parts[-1].isdigit():
+            return f"http://{raw}"
+    return f"http://{raw}:{port}"
+
+
+def is_rtx4070_online(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 0.6, api_key: Optional[str] = None) -> bool:
+    """Быстрая проверка доступности /health эндпоинта удаленного хоста RTX 4070."""
+    base_url = normalize_rtx4070_url(endpoint, port)
+    headers = {}
+    if api_key and api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            resp = client.get(f"{base_url}/health", headers=headers)
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def get_rtx4070_health(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 1.0, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """Получает детальное состояние сервера RTX 4070, загруженную модель и статус VRAM."""
+    base_url = normalize_rtx4070_url(endpoint, port)
+    headers = {}
+    if api_key and api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            resp = client.get(f"{base_url}/health", headers=headers)
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        logger.debug(f"get_rtx4070_health error: {e}")
+    return {"status": "offline", "loaded_llm": None, "embedding_active": False}
+
+
+def get_rtx4070_models(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 1.5, api_key: Optional[str] = None) -> List[str]:
+    """Возвращает список доступных на сервере GGUF моделей с диска."""
+    base_url = normalize_rtx4070_url(endpoint, port)
+    headers = {}
+    if api_key and api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            resp = client.get(f"{base_url}/admin/models", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("available_gguf", [])
+    except Exception as e:
+        logger.debug(f"get_rtx4070_models error: {e}")
+    return []
+
+
+def switch_rtx4070_model(endpoint: str, model: str, ctx_size: int = 16384, port: int = 8000, api_key: Optional[str] = None) -> Tuple[bool, str]:
+    """Переключает активную LLM модель в VRAM на RTX 4070."""
+    base_url = normalize_rtx4070_url(endpoint, port)
+    headers = {"Content-Type": "application/json"}
+    if api_key and api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {"model": model, "ctx_size": ctx_size}
+    try:
+        with httpx.Client(timeout=30.0, trust_env=False) as client:
+            resp = client.post(f"{base_url}/admin/switch", json=payload, headers=headers)
+            if resp.status_code == 200:
+                return True, f"Модель {model} успешно загружена в GPU VRAM (контекст {ctx_size})."
+            return False, f"Ошибка переключения ({resp.status_code}): {resp.text}"
+    except Exception as e:
+        return False, f"Сбой соединения при переключении: {e}"
+
+
+def unload_rtx4070_vram(endpoint: str = "127.0.0.1", port: int = 8000, api_key: Optional[str] = None) -> Tuple[bool, str]:
+    """Освобождает видеопамять RTX 4070, выгружая активную модель."""
+    base_url = normalize_rtx4070_url(endpoint, port)
+    headers = {}
+    if api_key and api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        with httpx.Client(timeout=5.0, trust_env=False) as client:
+            resp = client.post(f"{base_url}/admin/unload", headers=headers)
+            if resp.status_code == 200:
+                return True, "Память VRAM на RTX 4070 успешно освобождена. Сервер в режиме IDLE."
+            return False, f"Ошибка выгрузки ({resp.status_code}): {resp.text}"
+    except Exception as e:
+        return False, f"Сбой отправки команды выгрузки: {e}"
+
+
+def wake_rtx4070(mac_address: str = "00:11:22:33:44:55") -> Tuple[bool, str]:
+    """Отправляет Wake-on-LAN магический пакет на MAC-адрес серверного ПК."""
+    clean_mac = mac_address.strip()
+    if shutil.which("wol"):
+        try:
+            res = subprocess.run(["wol", clean_mac], capture_output=True, text=True, timeout=3)
+            if res.returncode == 0:
+                return True, f"Магический пакет Wake-on-LAN отправлен на {clean_mac} через wol."
+        except Exception:
+            pass
+
+    if shutil.which("etherwake"):
+        try:
+            res = subprocess.run(["sudo", "etherwake", clean_mac], capture_output=True, text=True, timeout=3)
+            if res.returncode == 0:
+                return True, "Wake-on-LAN пакет отправлен через etherwake."
+        except Exception:
+            pass
+
+    try:
+        import socket
+        hw_addr = clean_mac.replace(":", "").replace("-", "")
+        if len(hw_addr) != 12:
+            return False, f"Некорректный MAC-адрес: {clean_mac}"
+        mac_bytes = bytes.fromhex(hw_addr)
+        magic_payload = b"\xff" * 6 + mac_bytes * 16
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(magic_payload, ("255.255.255.255", 9))
+        return True, f"Магический пакет Wake-on-LAN успешно отправлен на {clean_mac} (UDP broadcast)."
+    except Exception as e:
+        return False, f"Ошибка отправки WoL: {e}"
+
+
+def start_rtx4070_mock() -> Tuple[bool, str]:
+    """Запускает локальный эмулятор RTX 4070 (127.0.0.1:8000) для тестирования."""
+    mock_script = Path.home() / ".local" / "share" / "llm-remote" / "mock_pc_server.py"
+    if not mock_script.exists():
+        mock_script = BASE_DIR.parent / "mock_pc_server.py"
+    if not mock_script.exists():
+        return False, "Скрипт mock_pc_server.py не найден."
+
+    try:
+        subprocess.Popen(
+            [sys.executable, str(mock_script)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        time.sleep(0.8)
+        return True, "Локальный Mock-сервер RTX 4070 запущен на 127.0.0.1:8000."
+    except Exception as e:
+        return False, f"Сбой запуска mock сервера: {e}"
+
+
+def save_rtx4070_settings(endpoint: str, port: int = 8000, api_key: str = "", default_model: str = "Qwen2.5-14B-Instruct-Q4_K_M.gguf") -> Tuple[bool, str]:
+    """
+    Сохраняет настройки удаленного подключения в .env RAG-приложения
+    и синхронизирует с ~/.config/llm-remote/config.env для Waybar и llm-ctl.
+    """
+    base_url = normalize_rtx4070_url(endpoint, port)
+    v1_url = f"{base_url}/v1"
+
+    env_file = BASE_DIR / ".env"
+    lines = []
+    keys_found = set()
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    new_lines = []
+    for line in lines:
+        if line.startswith("LLM_PROVIDER="):
+            new_lines.append("LLM_PROVIDER=RTX4070_REMOTE\n")
+            keys_found.add("LLM_PROVIDER")
+        elif line.startswith("LLM_BASE_URL="):
+            new_lines.append(f"LLM_BASE_URL={v1_url}\n")
+            keys_found.add("LLM_BASE_URL")
+        elif line.startswith("LLM_MODEL="):
+            new_lines.append(f"LLM_MODEL={default_model}\n")
+            keys_found.add("LLM_MODEL")
+        elif line.startswith("EMBEDDING_PROVIDER="):
+            new_lines.append("EMBEDDING_PROVIDER=REMOTE\n")
+            keys_found.add("EMBEDDING_PROVIDER")
+        elif line.startswith("EMBEDDING_BASE_URL="):
+            new_lines.append(f"EMBEDDING_BASE_URL={v1_url}\n")
+            keys_found.add("EMBEDDING_BASE_URL")
+        elif line.startswith("LLM_API_KEY="):
+            new_lines.append(f"LLM_API_KEY={api_key if api_key else 'not-needed'}\n")
+            keys_found.add("LLM_API_KEY")
+        elif line.startswith("EMBEDDING_API_KEY="):
+            new_lines.append(f"EMBEDDING_API_KEY={api_key if api_key else 'not-needed'}\n")
+            keys_found.add("EMBEDDING_API_KEY")
+        else:
+            new_lines.append(line)
+
+    if "LLM_PROVIDER" not in keys_found:
+        new_lines.append("LLM_PROVIDER=RTX4070_REMOTE\n")
+    if "LLM_BASE_URL" not in keys_found:
+        new_lines.append(f"LLM_BASE_URL={v1_url}\n")
+    if "EMBEDDING_BASE_URL" not in keys_found:
+        new_lines.append(f"EMBEDDING_BASE_URL={v1_url}\n")
+
+    with open(env_file, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    global_cfg = Path.home() / ".config" / "llm-remote" / "config.env"
+    if global_cfg.exists():
+        try:
+            cfg_lines = []
+            with open(global_cfg, "r", encoding="utf-8") as f:
+                cfg_lines = f.readlines()
+            new_cfg = []
+            for cl in cfg_lines:
+                if cl.startswith("LLM_SERVER_IP="):
+                    new_cfg.append(f'LLM_SERVER_IP="{endpoint.strip()}"\n')
+                elif cl.startswith("LLM_SERVER_PORT="):
+                    new_cfg.append(f'LLM_SERVER_PORT="{port}"\n')
+                elif cl.startswith("LLM_API_KEY="):
+                    new_cfg.append(f'LLM_API_KEY="{api_key}"\n')
+                else:
+                    new_cfg.append(cl)
+            with open(global_cfg, "w", encoding="utf-8") as f:
+                f.writelines(new_cfg)
+            subprocess.run(["pkill", "-RTMIN+9", "waybar"], capture_output=True)
+        except Exception:
+            pass
+
+    return True, f"Конфигурация успешно сохранена! Базовый URL: {v1_url}"
