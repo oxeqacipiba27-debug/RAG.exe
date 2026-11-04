@@ -5,6 +5,40 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и проект придерживается [Семантического версионирования (SemVer)](https://semver.org/lang/ru/).
 
+## [2.2.0] — 2026-11-05
+
+### 🪟 Выпуск автономного клиентского пакета для Windows 10/11 (`RAG.exe-windows/`)
+
+- **Выделенная автономная директория (`RAG.exe-windows/`)**:
+  - Полная адаптация клиентской RAG-системы EXSCIO под операционную систему Windows 10/11 (64-bit).
+- **Специализированные пакетные лаунчеры Windows (`*.bat`)**:
+  - `start.bat`: универсальный лаунчер с автосозданием `.env`, поиском интерпретатора Python (`venv`, `.venv`, `python`, `py -3`) и плавным переходом на браузер при отсутствии pywebview.
+  - `start_rag.bat`: быстрый запуск приложения RAG.
+  - `start_lmstudio.bat`: автоматическое переключение профиля на LM Studio (:1234) и старт.
+  - `start_ollama.bat`: переключение профиля на службу Ollama (:11434) и старт.
+  - `start_docker.bat`: предварительная проверка подсистемы WSL2 (`wsl -l -q`) по правилу 4 GEMINI.md, запуск Docker Compose и старт.
+  - `stop_docker.bat`: остановка контейнеров Docker (`docker compose down`).
+  - `switch_backend.bat`: консольное интерактивное меню быстрого переключения между всеми 4 бэкендами.
+  - `start_api.bat`: запуск интеграционного FastAPI/SSE сервера.
+  - `start_telegram_bot.bat`: запуск Telegram-бота на базе aiogram 3.x.
+- **Интеграция нативного десктопного окна Windows (`run_app.py`)**:
+  - Поддержка Microsoft Edge WebView2 (`gui='edgechromium'`) и WinForms (`gui='winforms'`) с иконкой `rag_icon.ico`.
+  - Управление процессами и портами через Windows `netstat -ano` и `taskkill /F /PID` (правило 3 GEMINI.md).
+  - Нативные всплывающие уведомления рабочего стола через PowerShell BalloonTip.
+  - Гарантированная выгрузка моделей из GPU при выходе через `server_manager.unload_all_models()` (`lms unload --all`).
+- **Соответствие стандартам кодировки консоли Windows (Правило 5 GEMINI.md)**:
+  - Автоматическая переконфигурация UTF-8 во всех скриптах через `sys.stdout.reconfigure(encoding="utf-8")`.
+  - Замена Unicode-эмодзи в консольных логах на ASCII-маркеры `[OK]`, `[!]`, `[X]`, исключающие сбои `cp1251 UnicodeEncodeError`.
+- **Обнаружение бэкендов на Windows (`server_manager.py`)**:
+  - Поддержка `lms.exe` в `%USERPROFILE%\.lmstudio\bin\lms.exe` и `%LOCALAPPDATA%`.
+  - Поддержка `ollama.exe` в `%LOCALAPPDATA%\Programs\Ollama` и `C:\Program Files\Ollama`.
+  - Поддержка Docker Desktop и проверка доступности WSL2 (`is_wsl2_available`).
+  - Поиск `nvidia-smi.exe` в `C:\Windows\System32` и `C:\Program Files\NVIDIA Corporation\NVSMI`.
+- **Исчерпывающий набор тестов (`tests/test_windows_components.py`, `tests/test_windows_ui_e2e.py`)**:
+  - 100% прохождение проверки компиляции байткода всех модулей.
+  - Модульные тесты ядра `rag_engine.py`: AppConfig, VectorStore, PIISanitizer, OkapiBM25, Lost-in-the-Middle.
+  - Тестирование переключения бэкендов `switch_backend.py` и dry run запуск Streamlit GUI.
+
 ---
 
 ## [2.1.1] — 2026-11-04

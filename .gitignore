@@ -15,6 +15,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.lmstudio
+!.env.ollama
+!.env.docker
+!.env.rtx4070
 *.local
 *.lock
 *.pem
