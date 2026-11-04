@@ -881,6 +881,7 @@ with st.sidebar:
                         st.error(msg)
 
             if st.button("🔄 Проверить статус соединения", key="btn_recheck_rtx4070", use_container_width=True):
+                server_manager.is_rtx4070_online(cfg_endpoint, int(cfg_port), timeout=1.0, api_key=cfg_api_key, force=True)
                 st.rerun()
 
             llm_model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
@@ -1310,9 +1311,18 @@ if mode == "💬 Чат с документами":
                         }
 
                         raw_response = ""
+                        inference_failed = False
                         with pipeline.client.stream("POST", "/chat/completions", json=payload, timeout=90.0) as stream_resp:
                             if stream_resp.status_code != 200:
-                                err_msg = f"Ошибка инференса ({selected_backend}) [{stream_resp.status_code}]: {stream_resp.read().decode('utf-8', errors='ignore')}"
+                                inference_failed = True
+                                raw_err = stream_resp.read().decode('utf-8', errors='ignore')
+                                if stream_resp.status_code == 503 and ("model_not_loaded" in raw_err or "VRAM" in raw_err):
+                                    err_msg = (
+                                        "⚠️ **Видеопамять RTX 4070 свободна (IDLE)**: Модель не загружена в GPU.\n\n"
+                                        "👉 Откройте боковую панель слева (или индикатор Waybar) и выберите модель для загрузки в VRAM."
+                                    )
+                                else:
+                                    err_msg = f"Ошибка инференса ({selected_backend}) [{stream_resp.status_code}]: {raw_err}"
                                 message_placeholder.error(err_msg)
                             else:
                                 for line in stream_resp.iter_lines():
@@ -1332,35 +1342,47 @@ if mode == "💬 Чат с документами":
                                         except Exception:
                                             pass
 
-                        final_sanitized = sanitize_llm_output(raw_response)
-                        message_placeholder.markdown(final_sanitized)
+                        if not inference_failed:
+                            if not raw_response.strip():
+                                message_placeholder.warning("⚠️ Сервер завершил генерацию без вывода текста.")
+                            else:
+                                final_sanitized = sanitize_llm_output(raw_response)
+                                message_placeholder.markdown(final_sanitized)
 
-                        citations_data = []
-                        no_info_phrases = ["нет информации", "в документах нет", "нет ответа", "не могу ответить"]
-                        used_context = not any(p in final_sanitized.lower() for p in no_info_phrases)
+                                citations_data = []
+                                no_info_phrases = ["нет информации", "в документах нет", "нет ответа", "не могу ответить"]
+                                used_context = not any(p in final_sanitized.lower() for p in no_info_phrases)
 
-                        if accepted_hits and used_context:
-                            for h in accepted_hits:
-                                citations_data.append({
-                                    "source": h.chunk.metadata.source,
-                                    "page": h.chunk.metadata.page,
-                                    "quote": h.chunk.text[:300]
+                                if accepted_hits and used_context:
+                                    for h in accepted_hits:
+                                        citations_data.append({
+                                            "source": h.chunk.metadata.source,
+                                            "page": h.chunk.metadata.page,
+                                            "quote": h.chunk.text[:300]
+                                        })
+                                    with st.expander(f"📄 Подтверждающие первоисточники ({len(citations_data)} фрагментов)"):
+                                        for idx, c in enumerate(citations_data, 1):
+                                            st.markdown(f"**[{idx}]** `{c['source']}` *(Страница {c['page']})*")
+                                            st.code(c["quote"], language="text")
+
+                                # Сохраняем завершенный ответ в историю без вызова rerun
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": final_sanitized,
+                                    "reasoning": reasoning_info,
+                                    "citations": citations_data if used_context else []
                                 })
-                            with st.expander(f"📄 Подтверждающие первоисточники ({len(citations_data)} фрагментов)"):
-                                for idx, c in enumerate(citations_data, 1):
-                                    st.markdown(f"**[{idx}]** `{c['source']}` *(Страница {c['page']})*")
-                                    st.code(c["quote"], language="text")
-
-                        # Сохраняем завершенный ответ в историю без вызова rerun
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": final_sanitized,
-                            "reasoning": reasoning_info,
-                            "citations": citations_data if used_context else []
-                        })
 
                 except Exception as e:
-                    message_placeholder.error(f"Сбой при выполнении запроса: {e}")
+                    err_str = str(e)
+                    if any(term in err_str for term in ("Connection refused", "ConnectError", "ConnectTimeout", "NetworkError", "ServerOfflineError", "RemoteLLMError")):
+                        message_placeholder.error(
+                            f"❌ **Сервер инференса ({selected_backend}) недоступен или ПК выключен.**\n\n"
+                            f"• Для удаленного ПК: отправьте Wake-on-LAN в боковой панели или через `llm-ctl wake`.\n"
+                            f"• Для автономной работы на ноуте: запустите локальный Mock-сервер в боковой панели или через `llm-ctl start-mock`."
+                        )
+                    else:
+                        message_placeholder.error(f"Сбой при выполнении запроса: {e}")
 
 
 # =====================================================================

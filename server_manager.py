@@ -15,6 +15,7 @@ import sys
 import shutil
 import subprocess
 import time
+import threading
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -889,41 +890,94 @@ def normalize_rtx4070_url(endpoint: str, port: int = 8000) -> str:
         if url.endswith("/v1"):
             url = url[:-3]
         return url
-    if ":" in raw and not raw.startswith("100."):
+    if ":" in raw:
         parts = raw.split(":")
         if parts[-1].isdigit():
             return f"http://{raw}"
     return f"http://{raw}:{port}"
 
 
-def is_rtx4070_online(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 0.6, api_key: Optional[str] = None) -> bool:
-    """Быстрая проверка доступности /health эндпоинта удаленного хоста RTX 4070."""
+_RTX_CACHE: Dict[str, Tuple[float, Any]] = {}
+_RTX_CACHE_LOCK = threading.Lock()
+
+
+def clear_rtx4070_cache() -> None:
+    """Полностью очищает кэш состояния RTX 4070."""
+    with _RTX_CACHE_LOCK:
+        _RTX_CACHE.clear()
+
+
+def is_rtx4070_online(
+    endpoint: str = "127.0.0.1",
+    port: int = 8000,
+    timeout: float = 0.6,
+    api_key: Optional[str] = None,
+    force: bool = False,
+    cache_ttl: float = 2.0
+) -> bool:
+    """Быстрая проверка доступности /health эндпоинта удаленного хоста RTX 4070 с потокобезопасным TTL-кэшированием."""
+    cache_key = f"online_{endpoint}_{port}"
+    now = time.time()
+    if force:
+        clear_rtx4070_cache()
+    else:
+        with _RTX_CACHE_LOCK:
+            if cache_key in _RTX_CACHE:
+                cached_time, val = _RTX_CACHE[cache_key]
+                if now - cached_time < cache_ttl:
+                    return bool(val)
+
     base_url = normalize_rtx4070_url(endpoint, port)
     headers = {}
     if api_key and api_key != "not-needed":
         headers["Authorization"] = f"Bearer {api_key}"
+    res = False
     try:
         with httpx.Client(timeout=timeout, trust_env=False) as client:
             resp = client.get(f"{base_url}/health", headers=headers)
-            return resp.status_code == 200
+            res = (resp.status_code == 200)
     except Exception:
-        return False
+        res = False
+    with _RTX_CACHE_LOCK:
+        _RTX_CACHE[cache_key] = (now, res)
+    return res
 
 
-def get_rtx4070_health(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 1.0, api_key: Optional[str] = None) -> Dict[str, Any]:
-    """Получает детальное состояние сервера RTX 4070, загруженную модель и статус VRAM."""
+def get_rtx4070_health(
+    endpoint: str = "127.0.0.1",
+    port: int = 8000,
+    timeout: float = 1.0,
+    api_key: Optional[str] = None,
+    force: bool = False,
+    cache_ttl: float = 2.0
+) -> Dict[str, Any]:
+    """Получает детальное состояние сервера RTX 4070, загруженную модель и статус VRAM с потокобезопасным TTL-кэшированием."""
+    cache_key = f"health_{endpoint}_{port}"
+    now = time.time()
+    if force:
+        clear_rtx4070_cache()
+    else:
+        with _RTX_CACHE_LOCK:
+            if cache_key in _RTX_CACHE:
+                cached_time, val = _RTX_CACHE[cache_key]
+                if now - cached_time < cache_ttl:
+                    return dict(val)
+
     base_url = normalize_rtx4070_url(endpoint, port)
     headers = {}
     if api_key and api_key != "not-needed":
         headers["Authorization"] = f"Bearer {api_key}"
+    health = {"status": "offline", "loaded_llm": None, "embedding_active": False}
     try:
         with httpx.Client(timeout=timeout, trust_env=False) as client:
             resp = client.get(f"{base_url}/health", headers=headers)
             if resp.status_code == 200:
-                return resp.json()
+                health = resp.json()
     except Exception as e:
         logger.debug(f"get_rtx4070_health error: {e}")
-    return {"status": "offline", "loaded_llm": None, "embedding_active": False}
+    with _RTX_CACHE_LOCK:
+        _RTX_CACHE[cache_key] = (now, health)
+    return health
 
 
 def get_rtx4070_models(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 1.5, api_key: Optional[str] = None) -> List[str]:
@@ -945,6 +999,7 @@ def get_rtx4070_models(endpoint: str = "127.0.0.1", port: int = 8000, timeout: f
 
 def switch_rtx4070_model(endpoint: str, model: str, ctx_size: int = 16384, port: int = 8000, api_key: Optional[str] = None) -> Tuple[bool, str]:
     """Переключает активную LLM модель в VRAM на RTX 4070."""
+    clear_rtx4070_cache()
     base_url = normalize_rtx4070_url(endpoint, port)
     headers = {"Content-Type": "application/json"}
     if api_key and api_key != "not-needed":
@@ -962,6 +1017,7 @@ def switch_rtx4070_model(endpoint: str, model: str, ctx_size: int = 16384, port:
 
 def unload_rtx4070_vram(endpoint: str = "127.0.0.1", port: int = 8000, api_key: Optional[str] = None) -> Tuple[bool, str]:
     """Освобождает видеопамять RTX 4070, выгружая активную модель."""
+    clear_rtx4070_cache()
     base_url = normalize_rtx4070_url(endpoint, port)
     headers = {}
     if api_key and api_key != "not-needed":
@@ -977,7 +1033,7 @@ def unload_rtx4070_vram(endpoint: str = "127.0.0.1", port: int = 8000, api_key: 
 
 
 def wake_rtx4070(mac_address: str = "00:11:22:33:44:55") -> Tuple[bool, str]:
-    """Отправляет Wake-on-LAN магический пакет на MAC-адрес серверного ПК."""
+    """Отправляет Wake-on-LAN магический пакет на MAC-адрес серверного ПК с мульти-броадкастом."""
     clean_mac = mac_address.strip()
     if shutil.which("wol"):
         try:
@@ -987,11 +1043,11 @@ def wake_rtx4070(mac_address: str = "00:11:22:33:44:55") -> Tuple[bool, str]:
         except Exception:
             pass
 
-    if shutil.which("etherwake"):
+    if shutil.which("wakeonlan"):
         try:
-            res = subprocess.run(["sudo", "etherwake", clean_mac], capture_output=True, text=True, timeout=3)
+            res = subprocess.run(["wakeonlan", clean_mac], capture_output=True, text=True, timeout=3)
             if res.returncode == 0:
-                return True, "Wake-on-LAN пакет отправлен через etherwake."
+                return True, f"Магический пакет Wake-on-LAN отправлен на {clean_mac} через wakeonlan."
         except Exception:
             pass
 
@@ -1002,17 +1058,34 @@ def wake_rtx4070(mac_address: str = "00:11:22:33:44:55") -> Tuple[bool, str]:
             return False, f"Некорректный MAC-адрес: {clean_mac}"
         mac_bytes = bytes.fromhex(hw_addr)
         magic_payload = b"\xff" * 6 + mac_bytes * 16
+
+        broadcast_ips = ["255.255.255.255", "<broadcast>"]
+        for env_var in ("LLM_SERVER_IP", "REAL_SERVER_IP"):
+            ip_val = os.getenv(env_var, "").strip()
+            if ip_val and ip_val.startswith("192.168.") and ip_val.count(".") == 3:
+                subnet_prefix = ".".join(ip_val.split(".")[:3])
+                bcast = f"{subnet_prefix}.255"
+                if bcast not in broadcast_ips:
+                    broadcast_ips.append(bcast)
+
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(magic_payload, ("255.255.255.255", 9))
+            for target_ip in broadcast_ips:
+                for port_num in (9, 7):
+                    try:
+                        s.sendto(magic_payload, (target_ip, port_num))
+                    except Exception:
+                        pass
         return True, f"Магический пакет Wake-on-LAN успешно отправлен на {clean_mac} (UDP broadcast)."
     except Exception as e:
         return False, f"Ошибка отправки WoL: {e}"
 
 
 def start_rtx4070_mock() -> Tuple[bool, str]:
-    """Запускает локальный эмулятор RTX 4070 (127.0.0.1:8000) для тестирования."""
+    """Запускает локальный эмулятор RTX 4070 (127.0.0.1:8000) для тестирования с проверкой готовности."""
     mock_script = Path.home() / ".local" / "share" / "llm-remote" / "mock_pc_server.py"
+    if not mock_script.exists():
+        mock_script = BASE_DIR / "mock_pc_server.py"
     if not mock_script.exists():
         mock_script = BASE_DIR.parent / "mock_pc_server.py"
     if not mock_script.exists():
@@ -1025,8 +1098,11 @@ def start_rtx4070_mock() -> Tuple[bool, str]:
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
-        time.sleep(0.8)
-        return True, "Локальный Mock-сервер RTX 4070 запущен на 127.0.0.1:8000."
+        for _ in range(15):
+            time.sleep(0.2)
+            if is_rtx4070_online("127.0.0.1", 8000, timeout=0.3, force=True):
+                return True, "Локальный Mock-сервер RTX 4070 запущен на 127.0.0.1:8000."
+        return True, "Локальный Mock-сервер запущен (ожидает подключений)."
     except Exception as e:
         return False, f"Сбой запуска mock сервера: {e}"
 

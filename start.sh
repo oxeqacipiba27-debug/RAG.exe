@@ -23,6 +23,30 @@ elif command -v python >/dev/null 2>&1; then
     PY_CMD="python"
 fi
 
+# Инициализация переменных окружения для Wayland, SwayFX и Hyprland
+if [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+    export QT_QPA_PLATFORM="wayland;xcb"
+    export MOZ_ENABLE_WAYLAND=1
+    export GDK_BACKEND="wayland,x11"
+fi
+
+# Автоматическое создание .env при его отсутствии
+if [ ! -f "$SCRIPT_DIR/.env" ]; then
+    if [ -f "$SCRIPT_DIR/.env.rtx4070" ]; then
+        echo "[i] Создание .env из профиля .env.rtx4070..."
+        cp "$SCRIPT_DIR/.env.rtx4070" "$SCRIPT_DIR/.env"
+    elif [ -f "$SCRIPT_DIR/.env.example" ]; then
+        echo "[i] Создание .env из шаблона .env.example..."
+        cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+    fi
+fi
+
+# Подключение базы знаний rag_index.json при наличии на рабочем столе
+if [ ! -f "$SCRIPT_DIR/rag_index.json" ] && [ -f "$HOME/Desktop/schoolX/rag_index.json" ]; then
+    echo "[i] Подключение базы знаний rag_index.json..."
+    ln -sf "$HOME/Desktop/schoolX/rag_index.json" "$SCRIPT_DIR/rag_index.json"
+fi
+
 echo "[i] Интерпретатор: $PY_CMD"
 echo "[i] Запуск EXSCIO..."
 echo ""

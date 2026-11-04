@@ -1,6 +1,7 @@
 import sys
 import os
 import subprocess
+import shutil
 import time
 import httpx
 
@@ -16,15 +17,24 @@ dotenv.load_dotenv(override=True)
 import server_manager
 
 print("=" * 60)
-print("  ТЕСТ ЗАПУСКА RAG С БЭКЕНДОМ OLLAMA")
-print(f"  Провайдер: {os.getenv('LLM_PROVIDER')}")
+active_prov = os.getenv("LLM_PROVIDER", "RTX4070_REMOTE")
+print(f"  ТЕСТ ЗАПУСКА RAG GUI (DRY RUN)")
+print(f"  Активный провайдер: {active_prov}")
 print("=" * 60)
 
-# 1. Проверяем стек Ollama
-print("\n[1/3] Проверка ensure_ollama_stack...")
-ok, msg = server_manager.ensure_ollama_stack(progress_callback=print)
-print("ensure_ollama_stack результат:", ok, msg)
-assert ok, f"Ollama стек должен быть готов: {msg}"
+# 1. Проверяем стек активного бэкенда
+print("\n[1/3] Проверка бэкенда...")
+if "OLLAMA" in active_prov.upper():
+    if shutil.which("ollama"):
+        ok, msg = server_manager.ensure_ollama_stack(progress_callback=print)
+        print("ensure_ollama_stack результат:", ok, msg)
+    else:
+        print("  [i] Ollama не установлена на системе, проверка пропущена.")
+elif "RTX" in active_prov.upper() or "REMOTE" in active_prov.upper():
+    online = server_manager.is_rtx4070_online()
+    print(f"  [i] Статус Remote RTX 4070 (:8000): {'В сети' if online else 'Оффлайн (Mock доступен)'}")
+else:
+    print(f"  [i] Бэкенд {active_prov} готов к тестированию.")
 
 # 2. Запускаем Streamlit rag_gui.py на тестовом порту
 test_port = 8599

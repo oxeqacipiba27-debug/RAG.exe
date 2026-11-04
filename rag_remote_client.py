@@ -18,7 +18,8 @@ import sys
 from typing import Any, Dict, Generator, List, Optional, Union
 
 import httpx
-from openai import OpenAI
+import openai
+from openai import OpenAI, APIConnectionError, APITimeoutError
 
 
 class RemoteLLMError(Exception):
@@ -73,7 +74,10 @@ class Remote4070Client:
             parsed = httpx.URL(raw_host)
             self.host = parsed.host
             self.port = parsed.port or (443 if parsed.scheme == "https" else 80)
-            self.base_url = str(parsed).rstrip("/")
+            base = str(parsed).rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            self.base_url = base
         else:
             self.host = raw_host
             self.port = int(
@@ -126,6 +130,7 @@ class Remote4070Client:
         self.openai_client = OpenAI(
             base_url=self.api_v1_url,
             api_key=self.api_key,
+            max_retries=1,
             timeout=httpx.Timeout(
                 connect=self.connect_timeout,
                 read=self.read_timeout,
@@ -133,6 +138,23 @@ class Remote4070Client:
                 pool=5.0,
             ),
         )
+
+    def close(self) -> None:
+        """Close underlying HTTP clients."""
+        try:
+            self.http_client.close()
+        except Exception:
+            pass
+        try:
+            self.openai_client.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     @staticmethod
     def _load_env_config(path: Path) -> Dict[str, str]:
@@ -220,13 +242,18 @@ class Remote4070Client:
         if not input_data:
             return []
 
-        response = self.openai_client.embeddings.create(
-            input=input_data,
-            model=model,
-        )
-
-        vectors = [item.embedding for item in response.data]
-        return vectors
+        try:
+            response = self.openai_client.embeddings.create(
+                input=input_data,
+                model=model,
+            )
+            vectors = [item.embedding for item in response.data]
+            return vectors
+        except (APIConnectionError, APITimeoutError, httpx.NetworkError, httpx.TimeoutException) as err:
+            raise ServerOfflineError(
+                f"\n❌ [CONNECTION DROPPED] Lost connection to {self.base_url} during embedding generation.\n"
+                f"   Reason: {type(err).__name__} ({err})"
+            ) from err
 
     def stream_chat(
         self,
@@ -273,17 +300,23 @@ class Remote4070Client:
             messages.append({"role": "user", "content": user_prompt})
 
         # 3. Stream completions via OpenAI SDK
-        stream = self.openai_client.chat.completions.create(
-            model=active_model,
-            messages=messages,
-            stream=True,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        try:
+            stream = self.openai_client.chat.completions.create(
+                model=active_model,
+                messages=messages,
+                stream=True,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
-        for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except (APIConnectionError, APITimeoutError, httpx.NetworkError, httpx.TimeoutException) as err:
+            raise ServerOfflineError(
+                f"\n❌ [CONNECTION DROPPED] Lost connection to {self.base_url} during token streaming.\n"
+                f"   Reason: {type(err).__name__} ({err})"
+            ) from err
 
 
 # --- Interactive Self-Test & Demo ---

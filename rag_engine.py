@@ -324,10 +324,28 @@ class BackendHealthChecker:
     @classmethod
     def check_llm(cls, client: OpenAI, config: AppConfig) -> Tuple[bool, str]:
         """Проверка доступности LLM через OpenAI-совместимый API."""
+        if config.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+            try:
+                import server_manager
+                base = server_manager.normalize_rtx4070_url(config.llm_base_url)
+                if not server_manager.is_rtx4070_online(base, timeout=0.6, api_key=config.llm_api_key):
+                    msg = cls.get_remediation_message(config, "LLM", "Удаленный хост RTX 4070 недоступен (ПК выключен или не в сети)")
+                    return False, msg
+            except Exception:
+                pass
+
         try:
             client.models.list(timeout=4.0)
             return True, "OK"
         except Exception as e:
+            if config.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+                try:
+                    import server_manager
+                    base = server_manager.normalize_rtx4070_url(config.llm_base_url)
+                    if server_manager.is_rtx4070_online(base, timeout=1.0, api_key=config.llm_api_key):
+                        return True, "OK"
+                except Exception:
+                    pass
             msg = cls.get_remediation_message(config, "LLM", str(e))
             return False, msg
 
@@ -860,8 +878,18 @@ class DenseVectorStore:
         headers = {}
         if emb_api_k and emb_api_k != "not-needed":
             headers["Authorization"] = f"Bearer {emb_api_k}"
-        self.client = httpx.Client(base_url=self.base_url, headers=headers, timeout=45.0, trust_env=False)
-        self.openai_client = OpenAI(base_url=self.base_url, api_key=emb_api_k)
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout=httpx.Timeout(connect=2.0, read=25.0, write=5.0, pool=5.0),
+            trust_env=False
+        )
+        self.openai_client = OpenAI(
+            base_url=self.base_url,
+            api_key=emb_api_k,
+            max_retries=1,
+            timeout=httpx.Timeout(connect=2.0, read=25.0, write=5.0, pool=5.0)
+        )
 
         # Локальная модель SentenceTransformer (инициализируется при первом требовании)
         self.st_model = None
@@ -929,13 +957,13 @@ class DenseVectorStore:
             return vec
 
         # 2. Удаленный режим (OpenAI API / LM Studio / Ollama)
-        delay = 1.0
+        delay = 0.5
         for attempt in range(max_retries):
             try:
                 res = self.openai_client.embeddings.create(
                     model=self.model_name,
                     input=formatted_input,
-                    timeout=30.0
+                    timeout=20.0
                 )
                 if res.data and len(res.data) > 0:
                     arr = np.array(res.data[0].embedding, dtype=np.float32)
@@ -951,13 +979,14 @@ class DenseVectorStore:
                     return vec
             except EmbeddingDimensionMismatchError:
                 raise
-            except Exception:
+            except Exception as e:
+                is_conn_error = isinstance(e, (openai.APIConnectionError, httpx.ConnectError, httpx.ConnectTimeout, ConnectionRefusedError))
                 # Fallback прямой httpx запрос
                 try:
                     resp = self.client.post(
                         "/embeddings",
                         json={"model": self.model_name, "input": formatted_input},
-                        timeout=30.0
+                        timeout=3.0 if is_conn_error else 15.0
                     )
                     if resp.status_code == 200:
                         data = resp.json()["data"][0]["embedding"]
@@ -976,8 +1005,11 @@ class DenseVectorStore:
                     raise
                 except Exception:
                     pass
+                if is_conn_error:
+                    # Сервер оффлайн — прерываем цикл повторов и позволяем BM25 сработать мгновенно
+                    break
                 time.sleep(delay)
-                delay *= 2.0
+                delay *= 1.5
         return None
 
     def get_batch_embeddings(self, texts: List[str], is_query: bool = False, batch_size: int = 16) -> List[Optional[List[float]]]:
@@ -1715,17 +1747,29 @@ class RAGPipeline:
         return True, "Все бэкенды RAG (LLM + Embeddings) доступны и функционируют штатно."
 
     def load_index(self) -> bool:
-        if not Path(self.index_file).exists():
+        idx_path = Path(self.index_file)
+        if not idx_path.exists() and not idx_path.is_absolute():
+            candidates = [
+                Path(__file__).resolve().parent / idx_path.name,
+                Path.home() / "Desktop" / "schoolX" / idx_path.name,
+            ]
+            for cand in candidates:
+                if cand.exists():
+                    logger.info(f"Найден индекс документов по пути: {cand}")
+                    idx_path = cand
+                    break
+
+        if not idx_path.exists():
             logger.warning(f"Файл индекса {self.index_file} не найден.")
             return False
 
-        logger.info(f"Загрузка индекса из {self.index_file}...")
+        logger.info(f"Загрузка индекса из {idx_path}...")
         t0 = time.time()
         try:
-            with open(self.index_file, "r", encoding="utf-8") as f:
+            with open(idx_path, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
         except Exception as e:
-            logger.error(f"Ошибка чтения {self.index_file}: {e}")
+            logger.error(f"Ошибка чтения {idx_path}: {e}")
             return False
 
         self.chunks = []

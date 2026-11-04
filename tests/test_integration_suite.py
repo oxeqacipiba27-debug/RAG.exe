@@ -91,6 +91,11 @@ class TestFullRAGIntegrationSuite(unittest.TestCase):
         cls.app = create_app(pipeline=cls.mock_pipeline, session_manager=cls.session_mgr)
         cls.client = TestClient(cls.app)
 
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "session_mgr") and cls.session_mgr:
+            cls.session_mgr.close()
+
     def test_01_api_health_check(self):
         """1. Проверка эндпоинта /health и /api/v1/health."""
         resp = self.client.get("/api/v1/health")

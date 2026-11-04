@@ -33,7 +33,7 @@ def search_smart(query, items, top_k=6):
     for i, item in enumerate(items):
         raw_text = item['text'].lower().replace('ё', 'е')
         text = normalize_ranges(raw_text)
-        source = item['source'].lower()
+        source = (item.get('source') or item.get('metadata', {}).get('source', '')).lower()
         full_text = text + ' ' + source
         words = text.split()
         
@@ -92,7 +92,7 @@ def search_smart(query, items, top_k=6):
     res = []
     file_counts = {}
     for sc, idx in scores:
-        src = items[idx]['source']
+        src = items[idx].get('source') or items[idx].get('metadata', {}).get('source', '')
         if file_counts.get(src, 0) < 2:
             res.append((sc, items[idx]))
             file_counts[src] = file_counts.get(src, 0) + 1
@@ -112,8 +112,8 @@ for q in test_queries:
     print(f"\n==================== QUERY: {q} ====================")
     results = search_smart(q, db, top_k=3)
     for sc, item in results:
-        src = item['source']
-        p = item['page']
+        src = item.get('source') or item.get('metadata', {}).get('source', '')
+        p = item.get('page') or item.get('metadata', {}).get('page', 1)
         snip = item['text'][:120].replace('\n', ' ')
         print(f"[{sc:.2f}] {src} (стр. {p}): {snip}...")
 
@@ -124,7 +124,7 @@ turn2_enriched = f"{turn1_q} {turn2_raw}"
 print(f"Follow-up query: '{turn2_raw}' -> Enriched search: '{turn2_enriched}'")
 results2 = search_smart(turn2_enriched, db, top_k=2)
 for sc, item in results2:
-    src = item['source']
-    p = item['page']
+    src = item.get('source') or item.get('metadata', {}).get('source', '')
+    p = item.get('page') or item.get('metadata', {}).get('page', 1)
     snip = item['text'][:120].replace('\n', ' ')
     print(f"[{sc:.2f}] {src} (стр. {p}): {snip}...")

@@ -70,6 +70,88 @@ def has_display() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
+def notify_desktop(title: str, message: str):
+    """Отправляет нативное уведомление в Hyprland или системный демон уведомлений Linux."""
+    if sys.platform == "win32":
+        return
+    if os.getenv("HYPRLAND_INSTANCE_SIGNATURE") and shutil.which("hyprctl"):
+        try:
+            subprocess.run(
+                ["hyprctl", "notify", "1", "3500", "rgb(c792ff)", f"{title}: {message}"],
+                capture_output=True,
+                timeout=2
+            )
+            return
+        except Exception:
+            pass
+    if shutil.which("notify-send"):
+        try:
+            icon = get_window_icon()
+            cmd = ["notify-send", title, message]
+            if icon:
+                cmd.extend(["-i", icon])
+            subprocess.run(cmd, capture_output=True, timeout=2)
+        except Exception:
+            pass
+
+
+def get_available_gui_backend() -> Optional[str]:
+    """
+    Определяет оптимальный графический бэкенд для pywebview.
+    На Wayland / Hyprland отдает приоритет Qt (PyQt6-WebEngine) для нативной отрисовки,
+    жестов тачпада, корректного масштабирования и защиты от сбоев DMA-BUF WebKitGTK.
+    """
+    if sys.platform == "win32":
+        return None
+
+    is_wayland = bool(os.getenv("WAYLAND_DISPLAY") or os.getenv("HYPRLAND_INSTANCE_SIGNATURE"))
+
+    # 1. Проверка доступности Qt (PyQt6 / qtpy)
+    has_qt = False
+    try:
+        from PyQt6 import QtWebEngineWidgets  # noqa: F401
+        has_qt = True
+    except Exception:
+        try:
+            import qtpy  # noqa: F401
+            has_qt = True
+        except Exception:
+            pass
+
+    # 2. Проверка доступности WebKit2GTK
+    has_gtk = False
+    try:
+        import gi
+        gi.require_version('Gtk', '3.0')
+        gi.require_version('WebKit2', '4.1')
+        from gi.repository import Gtk, WebKit2  # noqa: F401
+        has_gtk = True
+    except Exception:
+        try:
+            import gi
+            gi.require_version('Gtk', '3.0')
+            gi.require_version('WebKit2', '4.0')
+            from gi.repository import Gtk, WebKit2  # noqa: F401
+            has_gtk = True
+        except Exception:
+            pass
+
+    if is_wayland:
+        if has_qt:
+            os.environ.setdefault("QT_QPA_PLATFORM", "wayland;xcb")
+            return "qt"
+        if has_gtk:
+            os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+            return "gtk"
+    else:
+        if has_gtk:
+            return "gtk"
+        if has_qt:
+            return "qt"
+
+    return None
+
+
 def free_port(port: int = APP_PORT):
     """Гарантирует освобождение порта перед запуском как на Linux (lsof/fuser/ss), так и на Windows."""
     try:
@@ -149,6 +231,16 @@ def main():
                 print("[OK] Docker-стек запущен.")
             else:
                 print(f"[!] Предупреждение при запуске Docker: {msg}")
+
+        elif "RTX" in active_provider or "REMOTE" in active_provider:
+            print("[i] Проверка подключения к Remote RTX 4070 PC (:8000)...")
+            online = server_manager.is_rtx4070_online(timeout=0.6, force=True)
+            if online:
+                health = server_manager.get_rtx4070_health(force=True)
+                loaded = health.get("loaded_llm") or "IDLE (VRAM свободна)"
+                print(f"[OK] Remote RTX 4070 в сети. Активная модель: {loaded}")
+            else:
+                print("[i] Remote RTX 4070 оффлайн. В GUI доступны кнопки Wake-on-LAN и старта локального Mock-сервера.")
 
         else:
             cli = server_manager.get_lms_cli_path()
@@ -279,23 +371,46 @@ def main():
         elif not HAS_WEBVIEW:
             run_browser_fallback("Библиотека pywebview не установлена в текущем окружении.")
         else:
-            try:
-                print("[OK] Открытие нативного окна EXSCIO...")
-                window = webview.create_window(
-                    title="EXSCIO",
-                    url=APP_URL,
-                    width=1220,
-                    height=840,
-                    min_size=(900, 650),
-                    text_select=True,
-                    zoomable=True
-                )
-                window.events.closed += cleanup
+            gui_backend = get_available_gui_backend()
+            if not gui_backend and sys.platform != "win32":
+                run_browser_fallback("Не найден поддерживаемый графический движок (PyQt6 или WebKit2GTK).")
+            else:
+                try:
+                    backend_label = (gui_backend or "winforms").upper()
+                    print(f"[OK] Открытие нативного окна EXSCIO [{backend_label}]...")
+                    window = webview.create_window(
+                        title="EXSCIO",
+                        url=APP_URL,
+                        width=1220,
+                        height=840,
+                        min_size=(540, 420),
+                        text_select=True,
+                        zoomable=True
+                    )
+                    window.events.closed += cleanup
 
-                gui_backend = "gtk" if sys.platform != "win32" else None
-                webview.start(gui=gui_backend, icon=icon_path)
-            except Exception as e:
-                run_browser_fallback(f"Сбой графического движка окна ({e}).")
+                    def on_gui_ready():
+                        if gui_backend == "qt":
+                            try:
+                                from PyQt6.QtWidgets import QApplication
+                                app = QApplication.instance()
+                                if app:
+                                    app.setApplicationName("EXSCIO")
+                                    app.setDesktopFileName("exscio")
+                            except Exception:
+                                pass
+                        elif gui_backend == "gtk":
+                            try:
+                                from gi.repository import GLib
+                                GLib.set_prgname("exscio")
+                                GLib.set_application_name("EXSCIO")
+                            except Exception:
+                                pass
+                        notify_desktop("EXSCIO", "Автономный RAG готов к работе")
+
+                    webview.start(func=on_gui_ready, gui=gui_backend, icon=icon_path)
+                except Exception as e:
+                    run_browser_fallback(f"Сбой графического движка окна ({e}).")
     finally:
         cleanup()
 

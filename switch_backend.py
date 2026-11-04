@@ -110,10 +110,11 @@ def interactive_menu():
     elif choice == "4":
         switch_to("rtx4070")
     elif choice == "5":
-        from test_backends import test_lm_studio, test_ollama_native, test_docker
+        from test_backends import test_lm_studio, test_ollama_native, test_docker, test_rtx4070_remote
         test_lm_studio()
         test_ollama_native()
         test_docker()
+        test_rtx4070_remote()
     elif choice == "6":
         import subprocess
         print("\n[i] Запуск приложения EXSCIO...")

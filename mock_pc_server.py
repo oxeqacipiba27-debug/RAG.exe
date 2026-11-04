@@ -98,6 +98,7 @@ def generate_pseudo_embedding(text: str, dim: int = 768) -> List[float]:
 # --- API Endpoints ---
 
 @app.get("/health")
+@app.get("/v1/health")
 def get_health() -> Dict[str, Any]:
     """Health check endpoint used by Waybar and RAG client."""
     return {
@@ -110,6 +111,7 @@ def get_health() -> Dict[str, Any]:
 
 
 @app.get("/admin/models")
+@app.get("/v1/admin/models")
 def get_models() -> Dict[str, Any]:
     """List available GGUF models on disk and currently active model."""
     return {
@@ -118,7 +120,25 @@ def get_models() -> Dict[str, Any]:
     }
 
 
+@app.get("/v1/models")
+def get_v1_models() -> Dict[str, Any]:
+    """OpenAI-compatible models list endpoint."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": m,
+                "object": "model",
+                "created": int(state.start_time),
+                "owned_by": "exscio-rtx4070",
+            }
+            for m in state.available_gguf
+        ],
+    }
+
+
 @app.post("/admin/switch")
+@app.post("/v1/admin/switch")
 def switch_model(payload: SwitchModelRequest) -> Dict[str, Any]:
     """Switch active LLM loaded in VRAM."""
     model_name = payload.model
@@ -134,6 +154,7 @@ def switch_model(payload: SwitchModelRequest) -> Dict[str, Any]:
 
 
 @app.post("/admin/unload")
+@app.post("/v1/admin/unload")
 def unload_model() -> Dict[str, Any]:
     """Free VRAM by unloading active LLM."""
     state.active_llm = None
@@ -141,6 +162,7 @@ def unload_model() -> Dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
+@app.post("/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
     """OpenAI-compatible chat completion endpoint supporting SSE streaming."""
     if state.active_llm is None:
@@ -269,6 +291,7 @@ async def chat_completions(req: ChatCompletionRequest):
 
 
 @app.post("/v1/embeddings")
+@app.post("/embeddings")
 def embeddings(req: EmbeddingRequest) -> Dict[str, Any]:
     """OpenAI-compatible embeddings endpoint returning 768-dim float vectors."""
     if not state.embedding_active:

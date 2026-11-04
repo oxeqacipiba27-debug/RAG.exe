@@ -143,6 +143,52 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     echo -e "  ✔ Added ~/.local/bin to PATH"
 fi
 
+# 6. Waybar & SwayFX Desktop Integration
+echo -e "\n${YELLOW}[6/6] Ensuring Waybar & SwayFX integration...${NC}"
+WAYBAR_CFG="${HOME}/.config/waybar/config.jsonc"
+WAYBAR_CSS="${HOME}/.config/waybar/style.css"
+SWAY_CFG="${HOME}/.config/sway/config"
+
+if [[ -f "${WAYBAR_CFG}" ]] && ! grep -q "custom/llm" "${WAYBAR_CFG}"; then
+    echo -e "  Configuring ${GREEN}${WAYBAR_CFG}${NC}..."
+    sed -i '/"modules-right": \[/a \    "custom/llm",' "${WAYBAR_CFG}"
+    sed -i '$ d' "${WAYBAR_CFG}"
+    cat <<'EOF' >> "${WAYBAR_CFG}"
+  ,
+  "custom/llm": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "$HOME/.local/bin/llm-ctl status",
+    "interval": 5,
+    "signal": 9,
+    "on-click": "$HOME/.local/bin/llm-ctl menu",
+    "on-click-right": "$HOME/.local/bin/llm-ctl unload",
+    "escape": true,
+    "tooltip": true
+  }
+}
+EOF
+    cp "${WAYBAR_CFG}" "${HOME}/.config/waybar/config" 2>/dev/null || true
+    echo -e "  ✔ Added custom/llm to Waybar configuration"
+fi
+
+if [[ -f "${WAYBAR_CSS}" ]] && ! grep -q "#custom-llm" "${WAYBAR_CSS}"; then
+    if [[ -f "${SCRIPT_DIR}/waybar_style.css" ]]; then
+        cat "${SCRIPT_DIR}/waybar_style.css" >> "${WAYBAR_CSS}"
+        echo -e "  ✔ Appended custom-llm styles to ${GREEN}${WAYBAR_CSS}${NC}"
+    fi
+fi
+
+if [[ -f "${SWAY_CFG}" ]] && ! grep -q "llm-ctl" "${SWAY_CFG}"; then
+    if [[ -f "${SCRIPT_DIR}/sway_snippet.conf" ]]; then
+        cat "${SCRIPT_DIR}/sway_snippet.conf" >> "${SWAY_CFG}"
+        echo -e "  ✔ Appended LLM keybindings to ${GREEN}${SWAY_CFG}${NC}"
+    fi
+fi
+
+# Refresh Waybar widget
+pkill -RTMIN+9 waybar 2>/dev/null || true
+
 echo -e "\n${GREEN}================================================================${NC}"
 echo -e "${GREEN}    Installation Complete! System is ready for testing.         ${NC}"
 echo -e "${GREEN}================================================================${NC}"

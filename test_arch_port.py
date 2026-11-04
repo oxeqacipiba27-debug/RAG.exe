@@ -26,8 +26,8 @@ class TestArchPortIntegrity(unittest.TestCase):
     """Тесты целостности файлов и отсутствия Windows-специфичных артефактов."""
 
     def test_no_bat_files_remain(self):
-        """Проверка: во всем дереве каталогов не должно остаться Windows .bat файлов."""
-        bat_files = list(ROOT_DIR.rglob("*.bat"))
+        """Проверка: в дереве клиента Arch Linux не должно остаться Windows .bat файлов."""
+        bat_files = [f for f in ROOT_DIR.rglob("*.bat") if "pc_server" not in f.parts and "venv" not in f.parts]
         self.assertEqual(
             len(bat_files),
             0,
