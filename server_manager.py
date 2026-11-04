@@ -580,8 +580,8 @@ def get_ollama_cli_path() -> Optional[str]:
     return None
 
 
-def is_ollama_online(url: str = "http://127.0.0.1:11434/v1", timeout: float = 3.5) -> bool:
-    """Проверяет доступность эндпоинта Ollama с надежным таймаутом."""
+def is_ollama_online(url: str = "http://127.0.0.1:11434/v1", timeout: float = 0.8) -> bool:
+    """Проверяет доступность эндпоинта Ollama с быстрым таймаутом без фризов UI."""
     norm_url = url.rstrip("/")
     check_urls = [
         f"{norm_url}/models" if norm_url.endswith("/v1") else f"{norm_url}/v1/models",
@@ -980,21 +980,43 @@ def get_rtx4070_health(
     return health
 
 
-def get_rtx4070_models(endpoint: str = "127.0.0.1", port: int = 8000, timeout: float = 1.5, api_key: Optional[str] = None) -> List[str]:
-    """Возвращает список доступных на сервере GGUF моделей с диска."""
+def get_rtx4070_models(
+    endpoint: str = "127.0.0.1",
+    port: int = 8000,
+    timeout: float = 1.0,
+    api_key: Optional[str] = None,
+    force: bool = False,
+    cache_ttl: float = 5.0
+) -> List[str]:
+    """Возвращает список доступных на сервере GGUF моделей с диска с потокобезопасным TTL-кэшированием."""
+    cache_key = f"models_{endpoint}_{port}"
+    now = time.time()
+    if force:
+        clear_rtx4070_cache()
+    else:
+        with _RTX_CACHE_LOCK:
+            if cache_key in _RTX_CACHE:
+                cached_time, val = _RTX_CACHE[cache_key]
+                if now - cached_time < cache_ttl:
+                    return list(val)
+
     base_url = normalize_rtx4070_url(endpoint, port)
     headers = {}
     if api_key and api_key != "not-needed":
         headers["Authorization"] = f"Bearer {api_key}"
+    models: List[str] = []
     try:
         with httpx.Client(timeout=timeout, trust_env=False) as client:
             resp = client.get(f"{base_url}/admin/models", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                return data.get("available_gguf", [])
+                models = data.get("available_gguf", [])
     except Exception as e:
         logger.debug(f"get_rtx4070_models error: {e}")
-    return []
+
+    with _RTX_CACHE_LOCK:
+        _RTX_CACHE[cache_key] = (now, models)
+    return models
 
 
 def switch_rtx4070_model(endpoint: str, model: str, ctx_size: int = 16384, port: int = 8000, api_key: Optional[str] = None) -> Tuple[bool, str]:

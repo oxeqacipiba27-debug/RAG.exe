@@ -33,6 +33,7 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 import dotenv
 dotenv.load_dotenv(override=True)
 
+import pickle
 import streamlit as st
 import httpx
 import importlib
@@ -44,11 +45,12 @@ except Exception:
     pass
 
 
+@st.cache_data(ttl=5)
 def check_ollama_online(url: str = "http://127.0.0.1:11434/v1") -> bool:
-    """Безопасная проверка доступности службы Ollama с гарантией от AttributeError."""
+    """Безопасная проверка доступности службы Ollama с гарантией от AttributeError и лагов UI."""
     if hasattr(server_manager, "is_ollama_online"):
         try:
-            return server_manager.is_ollama_online(url)
+            return server_manager.is_ollama_online(url, timeout=0.8)
         except Exception:
             pass
     try:
@@ -59,7 +61,7 @@ def check_ollama_online(url: str = "http://127.0.0.1:11434/v1") -> bool:
         ]
         for target in check_urls:
             try:
-                with httpx.Client(timeout=3.0, trust_env=False) as client:
+                with httpx.Client(timeout=0.8, trust_env=False) as client:
                     resp = client.get(target)
                     if resp.status_code == 200:
                         return True
@@ -552,15 +554,23 @@ def fetch_models(url: str, default_models: Optional[List[str]] = None) -> List[s
     return ["qwen2.5-14b-instruct-1m", "local-model"]
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=True)
+def get_rag_pipeline() -> RAGPipeline:
+    """Глобальный синглтон RAGPipeline с предзагруженным индексом знаний."""
+    return RAGPipeline(index_file=INDEX_FILE)
+
+
 def get_pipeline(llm_model: str, embed_model: str, base_url: str) -> RAGPipeline:
-    """Кэшированная инициализация RAGPipeline."""
-    return RAGPipeline(
-        index_file=INDEX_FILE,
-        llm_model=llm_model,
-        embed_model=embed_model,
-        base_url=base_url
-    )
+    """Мгновенная настройка RAGPipeline под выбранный бэкенд и модель (0 мс)."""
+    pipe = get_rag_pipeline()
+    pipe.set_inference_target(llm_model=llm_model, embed_model=embed_model, base_url=base_url)
+    return pipe
+
+
+@st.cache_data(ttl=15)
+def cached_rtx4070_models(endpoint: str, port: int, api_key: Optional[str] = None) -> List[str]:
+    """Кэшированный список GGUF-моделей RTX 4070 с защитой от сетевых задержек UI."""
+    return server_manager.get_rtx4070_models(endpoint, port, timeout=1.0, api_key=api_key)
 
 
 @st.cache_data(ttl=5)
@@ -573,10 +583,25 @@ def cached_server_status(url: str) -> Tuple[bool, List[str]]:
 
 @st.cache_data(ttl=300)
 def cached_index_stats(index_file: str) -> int:
-    """Кэшированное чтение числа чанков без парсинга 50МБ JSON на каждый клик."""
+    """Мгновенное чтение числа чанков без парсинга 308МБ JSON на диск."""
+    try:
+        pipe = get_rag_pipeline()
+        if pipe and hasattr(pipe, "chunks") and pipe.chunks:
+            return len(pipe.chunks)
+    except Exception:
+        pass
     p = Path(index_file)
     if not p.exists():
         return 0
+    cache_path = p.with_name(f"{p.stem}.cache.pkl")
+    if cache_path.exists():
+        try:
+            with open(cache_path, "rb") as f:
+                c_data = pickle.load(f)
+                if isinstance(c_data, dict) and "chunks" in c_data:
+                    return len(c_data["chunks"])
+        except Exception:
+            pass
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -796,7 +821,7 @@ with st.sidebar:
                 unsafe_allow_html=True
             )
 
-            available_models = server_manager.get_rtx4070_models(cfg_endpoint, int(cfg_port), api_key=cfg_api_key)
+            available_models = cached_rtx4070_models(cfg_endpoint, int(cfg_port), api_key=cfg_api_key)
             if not available_models:
                 available_models = [active_llm]
 
@@ -814,6 +839,7 @@ with st.sidebar:
                     with st.spinner("Загрузка модели в память RTX 4070..."):
                         ok, msg = server_manager.switch_rtx4070_model(cfg_endpoint, selected_model_to_load, ctx_size=ctx_tokens, port=int(cfg_port), api_key=cfg_api_key)
                         if ok:
+                            cached_rtx4070_models.clear()
                             st.success(msg)
                             time.sleep(0.5)
                             st.rerun()
@@ -824,6 +850,7 @@ with st.sidebar:
                     with st.spinner("Освобождение VRAM..."):
                         ok, msg = server_manager.unload_rtx4070_vram(cfg_endpoint, port=int(cfg_port), api_key=cfg_api_key)
                         if ok:
+                            cached_rtx4070_models.clear()
                             st.info(msg)
                             time.sleep(0.5)
                             st.rerun()
@@ -842,7 +869,7 @@ with st.sidebar:
                 """,
                 unsafe_allow_html=True
             )
-            available_models = server_manager.get_rtx4070_models(cfg_endpoint, int(cfg_port), api_key=cfg_api_key)
+            available_models = cached_rtx4070_models(cfg_endpoint, int(cfg_port), api_key=cfg_api_key)
             if not available_models:
                 available_models = ["Qwen2.5-14B-Instruct-Q4_K_M.gguf", "Llama-3.1-8B-Instruct-Q8_0.gguf"]
 
@@ -851,6 +878,7 @@ with st.sidebar:
                 with st.spinner(f"Загрузка {chosen_idle_model} в VRAM..."):
                     ok, msg = server_manager.switch_rtx4070_model(cfg_endpoint, chosen_idle_model, port=int(cfg_port), api_key=cfg_api_key)
                     if ok:
+                        cached_rtx4070_models.clear()
                         st.success(msg)
                         time.sleep(0.5)
                         st.rerun()
@@ -908,8 +936,7 @@ with st.sidebar:
         lm_studio_url = "http://127.0.0.1:1234/v1"
         embed_model = "text-embedding-nomic-embed-text-v1.5"
 
-        is_online = cached_server_status(lm_studio_url)
-        loaded_models = server_manager.get_loaded_models() if is_online else []
+        is_online, loaded_models = cached_server_status(lm_studio_url)
         llm_loaded = [m for m in loaded_models if not ("embed" in m.lower() or "nomic" in m.lower())]
         if llm_loaded:
             llm_model = llm_loaded[0]

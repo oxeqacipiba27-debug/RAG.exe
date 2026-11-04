@@ -20,6 +20,7 @@ import os
 import sys
 import json
 import time
+import pickle
 import math
 import re
 import hashlib
@@ -1731,6 +1732,44 @@ class RAGPipeline:
 
         self.load_index()
 
+    def set_inference_target(
+        self,
+        llm_model: Optional[str] = None,
+        embed_model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None
+    ) -> None:
+        """
+        Мгновенно переключает целевой сервер и модели инференса без перезагрузки индекса (0 мс).
+        """
+        if llm_model:
+            self.llm_model = llm_model
+            self.config.llm_model = llm_model
+        if embed_model:
+            self.embed_model = embed_model
+            self.config.embedding_model = embed_model
+            if hasattr(self, "dense_store") and self.dense_store:
+                self.dense_store.model_name = embed_model
+        if base_url:
+            self.base_url = base_url
+            self.config.llm_base_url = base_url
+            self.config.embedding_base_url = base_url
+            if hasattr(self, "dense_store") and self.dense_store:
+                self.dense_store.base_url = base_url
+        if api_key is not None:
+            self.config.llm_api_key = api_key
+            self.config.embedding_api_key = api_key
+            if hasattr(self, "dense_store") and self.dense_store:
+                self.dense_store.api_key = api_key
+
+        api_k = self.config.llm_api_key or "not-needed"
+        headers = {}
+        if api_k and api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {api_k}"
+
+        self.openai_client = OpenAI(base_url=self.config.llm_base_url, api_key=api_k)
+        self.client = httpx.Client(base_url=self.config.llm_base_url, headers=headers, timeout=90.0, trust_env=False)
+
     def check_health(self) -> Tuple[bool, str]:
         """
         Pre-flight проверка доступности бэкендов LLM и Embeddings.
@@ -1763,7 +1802,40 @@ class RAGPipeline:
             logger.warning(f"Файл индекса {self.index_file} не найден.")
             return False
 
-        logger.info(f"Загрузка индекса из {idx_path}...")
+        target_stat = idx_path.stat()
+        cache_path = idx_path.with_name(f"{idx_path.stem}.cache.pkl")
+
+        # 1. Сверхбыстрая загрузка из бинарного кэша при совпадении mtime и размера файла (~2с вместо 18с)
+        if cache_path.exists():
+            try:
+                c_stat = cache_path.stat()
+                if c_stat.st_mtime >= target_stat.st_mtime:
+                    t0 = time.time()
+                    with open(cache_path, "rb") as f:
+                        cache_data = pickle.load(f)
+                    if (
+                        isinstance(cache_data, dict)
+                        and cache_data.get("version") == 1
+                        and cache_data.get("source_size") == target_stat.st_size
+                        and "chunks" in cache_data
+                        and "bm25" in cache_data
+                        and "matrix" in cache_data
+                    ):
+                        self.chunks = cache_data["chunks"]
+                        self.bm25 = cache_data["bm25"]
+                        self.dense_store.matrix = cache_data["matrix"]
+                        if self.dense_store.matrix is not None:
+                            self.dense_store.embedding_dim = self.dense_store.matrix.shape[1]
+                        self.retriever = HybridRetriever(self.dense_store, self.bm25, self.chunks)
+                        logger.info(
+                            f"Индекс мгновенно загружен из бинарного кэша {cache_path.name} за {time.time()-t0:.2f}s! "
+                            f"Загружено чанков: {len(self.chunks)}"
+                        )
+                        return True
+            except Exception as e:
+                logger.warning(f"Сбой чтения бинарного кэша {cache_path.name}: {e}. Выполняется разбор исходного JSON.")
+
+        logger.info(f"Загрузка индекса из исходного JSON {idx_path}...")
         t0 = time.time()
         try:
             with open(idx_path, "r", encoding="utf-8") as f:
@@ -1812,6 +1884,25 @@ class RAGPipeline:
         self.dense_store.build_matrix(self.chunks)
         self.retriever = HybridRetriever(self.dense_store, self.bm25, self.chunks)
         logger.info(f"Индекс успешно загружен за {time.time()-t0:.2f}s! Загружено чанков: {len(self.chunks)}")
+
+        # Сохранение бинарного кэша для сверхбыстрой последующей загрузки
+        try:
+            cache_payload = {
+                "version": 1,
+                "source_mtime": target_stat.st_mtime,
+                "source_size": target_stat.st_size,
+                "chunks": self.chunks,
+                "bm25": self.bm25,
+                "matrix": self.dense_store.matrix,
+            }
+            tmp_cache = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
+            with open(tmp_cache, "wb") as f:
+                pickle.dump(cache_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_cache, cache_path)
+            logger.info(f"Бинарный кэш индекса успешно сохранен: {cache_path.name}")
+        except Exception as e:
+            logger.warning(f"Не удалось записать бинарный кэш {cache_path}: {e}")
+
         return True
 
     def save_index(self, max_backups: int = 3):
@@ -1820,7 +1911,8 @@ class RAGPipeline:
         1. Запись во временный файл в той же директории (index.tmp.PID_TIMESTAMP) с flush() и os.fsync().
         2. Ротация последних N резервных копий (.bak.1, .bak.2, ...).
         3. Атомарное замещение целевого файла через os.replace().
-        4. Гарантированная очистка временного файла при любой ошибке.
+        4. Атомарная синхронизация бинарного кэша (*.cache.pkl).
+        5. Гарантированная очистка временного файла при любой ошибке.
         """
         target_path = Path(self.index_file).resolve()
         temp_path = target_path.with_name(f"{target_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
@@ -1853,6 +1945,26 @@ class RAGPipeline:
             # 3. Атомарная замена
             os.replace(temp_path, target_path)
             logger.info(f"Индекс успешно атомарно сохранен: {target_path} ({len(self.chunks)} чанков).")
+
+            # 4. Атомарное обновление бинарного кэша
+            try:
+                cache_path = target_path.with_name(f"{target_path.stem}.cache.pkl")
+                cur_stat = target_path.stat()
+                cache_payload = {
+                    "version": 1,
+                    "source_mtime": cur_stat.st_mtime,
+                    "source_size": cur_stat.st_size,
+                    "chunks": self.chunks,
+                    "bm25": self.bm25,
+                    "matrix": self.dense_store.matrix,
+                }
+                tmp_cache = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
+                with open(tmp_cache, "wb") as f:
+                    pickle.dump(cache_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(tmp_cache, cache_path)
+                logger.info(f"Бинарный кэш индекса успешно обновлен: {cache_path.name}")
+            except Exception as e:
+                logger.warning(f"Не удалось обновить бинарный кэш {cache_path}: {e}")
 
         except Exception as e:
             logger.critical(f"Ошибка сохранения индекса: {e}. Удаление временного файла.")

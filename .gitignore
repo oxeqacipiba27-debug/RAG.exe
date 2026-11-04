@@ -28,6 +28,8 @@ __pycache__/
 # RAG Large Storage & Vector Index (generated locally)
 rag_index.json
 *.json.bak
+*.cache.pkl
+*.cache.npz
 
 # Knowledge Base Raw Data & Scraped Files
 data/*
