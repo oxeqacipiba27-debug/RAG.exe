@@ -76,6 +76,36 @@ class TestWindowsBatchLaunchers(unittest.TestCase):
             self.assertTrue(content.startswith("@echo off"), f"{name} должен начинаться с @echo off")
             self.assertIn("chcp 65001", content, f"{name} должен устанавливать кодовую страницу chcp 65001")
 
+    def test_batch_launchers_python_interpreter_logic(self):
+        """Проверка, что все батч-скрипты корректно обрабатывают py -3 через PY_EXTRA."""
+        python_launchers = [
+            "start.bat",
+            "start_rag.bat",
+            "start_ollama.bat",
+            "start_lmstudio.bat",
+            "start_docker.bat",
+            "switch_backend.bat",
+            "start_api.bat",
+            "start_telegram_bot.bat"
+        ]
+        for name in python_launchers:
+            bat_path = WINDOWS_DIR / name
+            content = bat_path.read_text(encoding="utf-8")
+            self.assertIn("PY_CMD=", content, f"{name} должен объявлять PY_CMD")
+            self.assertIn("PY_EXTRA=", content, f"{name} должен объявлять PY_EXTRA для безопасного запуска py -3")
+            self.assertIn(":python_found", content, f"{name} должен использовать переход к метке :python_found")
+
+    def test_batch_launchers_no_raw_emojis(self):
+        """Проверка соблюдения правила 5 GEMINI.md: отсутствие сырых эмодзи в батч-скриптах."""
+        for bat_file in WINDOWS_DIR.glob("*.bat"):
+            content = bat_file.read_text(encoding="utf-8")
+            for char in content:
+                self.assertLess(
+                    ord(char),
+                    0x2600,
+                    f"Файл {bat_file.name} содержит спецсимвол/эмодзи '{char}', нарушающий cp1251"
+                )
+
 
 class TestRAGEngineComponents(unittest.TestCase):
     """3. Тестирование ключевых компонентов ядра rag_engine.py."""
@@ -208,6 +238,22 @@ class TestServerManagerWindows(unittest.TestCase):
             self.assertIn("--gpu", called_cmd2)
             self.assertIn("off", called_cmd2)
 
+    @patch("subprocess.run")
+    def test_windows_gpu_fallback_wmi(self, mock_run):
+        """Проверка fallback-обнаружения GPU через PowerShell / WMI на Windows."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "NVIDIA GeForce RTX 4070 Laptop GPU\n"
+        mock_run.return_value = mock_proc
+
+        with patch("sys.platform", "win32"), \
+             patch("shutil.which", return_value=None):
+            gpu_info = server_manager.get_gpu_info()
+            self.assertTrue(gpu_info["has_gpu"])
+            self.assertEqual(gpu_info["vendor"], "NVIDIA")
+            self.assertEqual(gpu_info["method"], "powershell_wmi")
+            self.assertEqual(gpu_info["gpus"][0]["name"], "NVIDIA GeForce RTX 4070 Laptop GPU")
+
 
 class TestSwitchBackend(unittest.TestCase):
     """5. Тестирование модуля switch_backend.py."""
@@ -285,6 +331,21 @@ class TestStreamlitGUIIntegration(unittest.TestCase):
                 proc.wait(timeout=5)
             except Exception:
                 proc.kill()
+
+
+class TestCliScriptsCompatibility(unittest.TestCase):
+    """7. Проверка скриптов CLI на соответствие стандарту Windows cp1251 (Правило 5)."""
+
+    def test_cli_scripts_ascii_markers(self):
+        cli_files = ["rag_chat.py", "ingest.py", "run_api.py", "switch_backend.py"]
+        for fname in cli_files:
+            fpath = WINDOWS_DIR / fname
+            content = fpath.read_text(encoding="utf-8")
+            self.assertIn("sys.stdout.reconfigure", content, f"{fname} обязан настраивать кодировку UTF-8")
+            self.assertNotIn("🚀", content, f"{fname} не должен содержать эмодзи ракеты")
+            self.assertNotIn("⚠️", content, f"{fname} не должен содержать эмодзи предупреждения")
+            self.assertNotIn("✅", content, f"{fname} не должен содержать эмодзи галочки")
+            self.assertNotIn("❌", content, f"{fname} не должен содержать эмодзи крестика")
 
 
 if __name__ == "__main__":

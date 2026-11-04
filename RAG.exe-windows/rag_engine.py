@@ -27,7 +27,7 @@ import urllib.parse
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Настройка UTF-8 для вывода в Windows
 if sys.platform == "win32":
@@ -376,7 +376,7 @@ class ChunkMetadata(BaseModel):
     sheet: Optional[str] = Field(default=None, description="Имя листа для табличных документов Excel")
     char_count: int = Field(default=0, description="Число символов во фрагменте")
     token_count: int = Field(default=0, description="Число токенов во фрагменте")
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="ISO timestamp создания")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO timestamp создания")
     content_hash: str = Field(default="", description="SHA-256 хеш очищенного текста")
 
 
@@ -1529,7 +1529,7 @@ class DocumentIngestionPipeline:
 
         all_chunks: List[DocumentChunk] = []
         seen_hashes: Set[str] = set()
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
 
         for f_idx, file_path in enumerate(files, 1):
             clean_name = urllib.parse.unquote(file_path.name)
@@ -1791,7 +1791,7 @@ class RAGPipeline:
                     page=item.get("page", 1),
                     char_count=len(text_content),
                     token_count=count_tokens(text_content),
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                     content_hash=hashlib.sha256(text_content.encode("utf-8")).hexdigest()[:16]
                 )
 

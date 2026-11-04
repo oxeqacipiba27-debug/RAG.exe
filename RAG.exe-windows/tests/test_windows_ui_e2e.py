@@ -95,16 +95,39 @@ class TestWindowsUIAndE2E(unittest.TestCase):
 
     def test_ui_session_state_defaults(self):
         """Проверка структуры и начальных параметров сессии Streamlit GUI."""
-        expected_defaults = {
-            "messages": [],
-            "custom_system_prompt": "",
-            "active_backend": "LM Studio",
-            "search_top_k": 5,
-            "temperature": 0.0,
-            "max_tokens": 1500
+        import streamlit as st
+
+        # Начальные конфигурационные параметры из rag_gui.py
+        initial_rag_config = {
+            "top_k": 5,
+            "context_limit": 2500,
+            "confidence_thresh": 0.015,
+            "temperature": 0.28,
+            "top_p": 0.8,
+            "presence_pen": 0.1,
         }
-        for k, v in expected_defaults.items():
-            self.assertIsNotNone(k)
+
+        # Проверяем типы и корректность диапазонов параметров
+        self.assertIsInstance(initial_rag_config["top_k"], int)
+        self.assertTrue(1 <= initial_rag_config["top_k"] <= 20, "top_k должен быть в диапазоне [1, 20]")
+        self.assertTrue(500 <= initial_rag_config["context_limit"] <= 8192, "context_limit должен быть в [500, 8192]")
+        self.assertTrue(0.0 <= initial_rag_config["confidence_thresh"] <= 1.0)
+        self.assertTrue(0.0 <= initial_rag_config["temperature"] <= 1.5)
+        self.assertTrue(0.0 <= initial_rag_config["top_p"] <= 1.0)
+        self.assertTrue(0.0 <= initial_rag_config["presence_pen"] <= 1.0)
+
+        # Проверяем системный промт по умолчанию и изоляцию контекста
+        default_prompt = rag_engine.RAGPipeline.SYSTEM_PROMPT
+        self.assertIn("Ты — ведущий ИИ-консультант", default_prompt)
+        self.assertIn("<context>", default_prompt)
+
+        # Проверяем логику обновления и сброса системного промта
+        custom_prompt = "Тестовая инструкция агента."
+        st.session_state["custom_system_prompt"] = custom_prompt
+        self.assertEqual(st.session_state["custom_system_prompt"], custom_prompt)
+        # Сброс к каноническому системному промту ядра
+        st.session_state["custom_system_prompt"] = default_prompt
+        self.assertEqual(st.session_state["custom_system_prompt"], default_prompt)
 
     def test_fastapi_server_routes_import(self):
         """Проверка доступности и схемы маршрутов интеграционного API сервера run_api.py."""

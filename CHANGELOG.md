@@ -12,32 +12,28 @@
 - **Выделенная автономная директория (`RAG.exe-windows/`)**:
   - Полная адаптация клиентской RAG-системы EXSCIO под операционную систему Windows 10/11 (64-bit).
 - **Специализированные пакетные лаунчеры Windows (`*.bat`)**:
-  - `start.bat`: универсальный лаунчер с автосозданием `.env`, поиском интерпретатора Python (`venv`, `.venv`, `python`, `py -3`) и плавным переходом на браузер при отсутствии pywebview.
-  - `start_rag.bat`: быстрый запуск приложения RAG.
-  - `start_lmstudio.bat`: автоматическое переключение профиля на LM Studio (:1234) и старт.
-  - `start_ollama.bat`: переключение профиля на службу Ollama (:11434) и старт.
-  - `start_docker.bat`: предварительная проверка подсистемы WSL2 (`wsl -l -q`) по правилу 4 GEMINI.md, запуск Docker Compose и старт.
-  - `stop_docker.bat`: остановка контейнеров Docker (`docker compose down`).
-  - `switch_backend.bat`: консольное интерактивное меню быстрого переключения между всеми 4 бэкендами.
-  - `start_api.bat`: запуск интеграционного FastAPI/SSE сервера.
-  - `start_telegram_bot.bat`: запуск Telegram-бота на базе aiogram 3.x.
+  - `start.bat`: универсальный лаунчер с надежным обнаружением интерпретатора Python (`venv`, `.venv`, `python`, `py -3` с разделением `PY_CMD` и `PY_EXTRA`), корректной обработкой кодов выхода Windows CMD (`STATUS_CONTROL_C_EXIT` 0xC000013A) и плавным переходом на браузер при сбое GUI.
+  - `start_rag.bat`, `start_lmstudio.bat`, `start_ollama.bat`, `start_docker.bat`, `start_api.bat`, `start_telegram_bot.bat`, `switch_backend.bat`: унифицированная логика обнаружения Python с переходом `:python_found`, устраняющая баг с раскрытием `%errorlevel%` в блоках CMD и запуск `py -3`.
+  - `stop_docker.bat`: безопасная остановка контейнеров Docker (`docker compose down`).
 - **Интеграция нативного десктопного окна Windows (`run_app.py`)**:
-  - Поддержка Microsoft Edge WebView2 (`gui='edgechromium'`) и WinForms (`gui='winforms'`) с иконкой `rag_icon.ico`.
-  - Управление процессами и портами через Windows `netstat -ano` и `taskkill /F /PID` (правило 3 GEMINI.md).
+  - Поддержка Microsoft Edge WebView2 (`gui='edgechromium'`) и WinForms (`gui='winforms'`) с иконкой `rag_icon.ico` и зависимостью `pythonnet`.
+  - Управление процессами и портами через Windows `netstat -ano` и `taskkill /F /PID` (правило 3 GEMINI.md) с защитой от ошибок парсинга PID.
   - Нативные всплывающие уведомления рабочего стола через PowerShell BalloonTip.
   - Гарантированная выгрузка моделей из GPU при выходе через `server_manager.unload_all_models()` (`lms unload --all`).
 - **Соответствие стандартам кодировки консоли Windows (Правило 5 GEMINI.md)**:
-  - Автоматическая переконфигурация UTF-8 во всех скриптах через `sys.stdout.reconfigure(encoding="utf-8")`.
-  - Замена Unicode-эмодзи в консольных логах на ASCII-маркеры `[OK]`, `[!]`, `[X]`, исключающие сбои `cp1251 UnicodeEncodeError`.
-- **Обнаружение бэкендов на Windows (`server_manager.py`)**:
+  - Автоматическая переконфигурация UTF-8 во всех скриптах через `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`.
+  - Замена Unicode-эмодзи в консольных логах CLI-скриптов (`rag_chat.py`, `ingest.py`, `run_api.py`) на ASCII-маркеры `[OK]`, `[!]`, `[X]`, исключающие сбои `cp1251 UnicodeEncodeError`.
+- **Обнаружение бэкендов и GPU на Windows (`server_manager.py`)**:
   - Поддержка `lms.exe` в `%USERPROFILE%\.lmstudio\bin\lms.exe` и `%LOCALAPPDATA%`.
   - Поддержка `ollama.exe` в `%LOCALAPPDATA%\Programs\Ollama` и `C:\Program Files\Ollama`.
   - Поддержка Docker Desktop и проверка доступности WSL2 (`is_wsl2_available`).
-  - Поиск `nvidia-smi.exe` в `C:\Windows\System32` и `C:\Program Files\NVIDIA Corporation\NVSMI`.
-- **Исчерпывающий набор тестов (`tests/test_windows_components.py`, `tests/test_windows_ui_e2e.py`)**:
-  - 100% прохождение проверки компиляции байткода всех модулей.
+  - Поиск `nvidia-smi.exe` в `C:\Windows\System32` и `C:\Program Files\NVIDIA Corporation\NVSMI`, плюс fallback-диагностика видеоконтроллеров через PowerShell / WMI (`Win32_VideoController`).
+- **Исчерпывающий набор тестов (51 тест, 100% pass)**:
+  - 100% прохождение проверки компиляции байткода всех модулей (`py_compile`).
+  - Устранение `DeprecationWarning: datetime.utcnow()` с переходом на `datetime.now(timezone.utc)`.
   - Модульные тесты ядра `rag_engine.py`: AppConfig, VectorStore, PIISanitizer, OkapiBM25, Lost-in-the-Middle.
-  - Тестирование переключения бэкендов `switch_backend.py` и dry run запуск Streamlit GUI.
+  - Тестирование батч-скриптов Windows на синтаксис, маркеры и аргументы интерпретатора.
+  - Реальная валидация сессионных параметров Streamlit GUI, диапазонов гиперпараметров и Prompt Tuning.
 
 ---
 

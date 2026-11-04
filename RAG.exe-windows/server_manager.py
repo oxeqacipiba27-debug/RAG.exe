@@ -216,8 +216,41 @@ def get_gpu_info() -> Dict[str, Any]:
     except Exception:
         pass
 
-    # 4. Fallback: проверка lspci на Linux для индикации физического наличия ускорителя
-    if sys.platform != "win32" and shutil.which("lspci"):
+    # 4. Fallback: проверка видеоконтроллеров через PowerShell / WMI на Windows или lspci на Linux
+    if sys.platform == "win32":
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            ps_cmd = "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                creationflags=creationflags
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+                gpu_lines = [l for l in lines if any(k in l.lower() for k in ["nvidia", "amd", "radeon", "intel", "geforce", "rtx"])]
+                if gpu_lines:
+                    first = gpu_lines[0]
+                    v = "NVIDIA" if any(x in first.lower() for x in ["nvidia", "geforce", "rtx"]) else ("AMD" if any(x in first.lower() for x in ["amd", "radeon"]) else "INTEL")
+                    result["has_gpu"] = True
+                    result["vendor"] = v
+                    result["gpus"] = [{
+                        "index": 0,
+                        "name": first,
+                        "total_memory_mb": None,
+                        "free_memory_mb": None,
+                        "used_memory_mb": None,
+                        "driver_version": "N/A (Win32_VideoController)",
+                        "vendor": v
+                    }]
+                    result["raw_output"] = "\n".join(gpu_lines)
+                    result["method"] = "powershell_wmi"
+                    return result
+        except Exception:
+            pass
+    elif shutil.which("lspci"):
         try:
             proc = subprocess.run(["lspci"], capture_output=True, text=True, timeout=3)
             if proc.returncode == 0:
@@ -1256,7 +1289,8 @@ def save_rtx4070_settings(endpoint: str, port: int = 8000, api_key: str = "", de
                     new_cfg.append(cl)
             with open(global_cfg, "w", encoding="utf-8") as f:
                 f.writelines(new_cfg)
-            subprocess.run(["pkill", "-RTMIN+9", "waybar"], capture_output=True)
+            if sys.platform != "win32":
+                subprocess.run(["pkill", "-RTMIN+9", "waybar"], capture_output=True)
         except Exception:
             pass
 

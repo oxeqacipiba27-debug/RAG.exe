@@ -4,12 +4,36 @@ title EXSCIO - Запуск через Docker (WSL2)
 
 cd /d "%~dp0"
 
-set "PY_CMD=python"
+set "PY_CMD="
+set "PY_EXTRA="
+
 if exist "%~dp0venv\Scripts\python.exe" (
     set "PY_CMD=%~dp0venv\Scripts\python.exe"
-) else if exist "%~dp0.venv\Scripts\python.exe" (
-    set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+    goto :python_found
 )
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+    goto :python_found
+)
+
+where python >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=python"
+    goto :python_found
+)
+
+where py >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=py"
+    set "PY_EXTRA=-3"
+    goto :python_found
+)
+
+echo [X] Ошибка: Python не найден в системе. Установите Python 3.10+ и добавьте его в PATH.
+pause
+exit /b 1
+
+:python_found
 
 echo =========================================================
 echo   EXSCIO: Запуск в Docker-контейнере (WSL2 / Ollama)
@@ -37,7 +61,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [i] Переключение профиля на Docker...
-"%PY_CMD%" switch_backend.py docker
+"%PY_CMD%" %PY_EXTRA% switch_backend.py docker
 
 echo.
 echo [i] Запуск Docker Compose...
@@ -48,4 +72,4 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [i] Запуск EXSCIO...
-"%PY_CMD%" run_app.py %*
+"%PY_CMD%" %PY_EXTRA% run_app.py %*

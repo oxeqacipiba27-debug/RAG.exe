@@ -155,14 +155,17 @@ def free_port(port: int = APP_PORT):
             for line in res.stdout.splitlines():
                 if f":{port} " in line and "LISTENING" in line:
                     parts = line.strip().split()
-                    pid = parts[-1]
-                    if pid and pid != "0" and int(pid) != os.getpid():
-                        subprocess.run(
-                            ["taskkill", "/F", "/PID", pid],
-                            capture_output=True,
-                            creationflags=creationflags
-                        )
-                        time.sleep(0.5)
+                    try:
+                        pid = parts[-1]
+                        if pid and pid != "0" and int(pid) != os.getpid():
+                            subprocess.run(
+                                ["taskkill", "/F", "/PID", pid],
+                                capture_output=True,
+                                creationflags=creationflags
+                            )
+                            time.sleep(0.5)
+                    except (ValueError, IndexError):
+                        continue
         else:
             # Linux fallback
             if shutil.which("lsof"):
