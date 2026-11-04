@@ -14,12 +14,21 @@ from __future__ import annotations
 
 import os
 import sys
+
+# Безопасная настройка кодировки консоли Windows (Rule 5)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import json
 import re
 import time
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Set
 
 import dotenv
 dotenv.load_dotenv(override=True)
@@ -74,14 +83,8 @@ def ensure_ollama_stack_safe(progress_callback=None) -> Tuple[bool, str]:
         return True, "Служба Ollama активна и готова к работе."
     return False, "Служба Ollama не отвечает на порту 11434."
 
-# Настройка UTF-8 для вывода в Windows и обход локального прокси
+# Обход локального прокси
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
 
 from rag_engine import (
     RAGPipeline,
@@ -721,8 +724,8 @@ with st.sidebar:
         preset_options = [
             "🌐 Tailscale (P2P WireGuard — из любой сети)",
             "🏠 Локальная сеть (LAN)",
-            "☁️ Cloudflare HTTPS Tunnel",
-            "🧪 Локальный Mock-сервер (127.0.0.1:8000)",
+            "☁️ Туннель Cloudflare HTTPS",
+            "🧪 Локальный тестовый сервер (127.0.0.1:8000)",
             "✏️ Пользовательский адрес"
         ]
 
@@ -759,17 +762,17 @@ with st.sidebar:
         elif "Cloudflare" in selected_preset and not ("trycloudflare" in cur_ip or cur_ip.startswith("https://")):
             target_endpoint = "https://your-tunnel.trycloudflare.com"
             target_port = 443
-        elif "Mock-сервер" in selected_preset:
+        elif "тестовый сервер" in selected_preset or "Mock" in selected_preset:
             target_endpoint = "127.0.0.1"
             target_port = 8000
 
         col_ep1, col_ep2 = st.columns([3, 1])
         with col_ep1:
             cfg_endpoint = st.text_input(
-                "Хост / URL сервера",
+                "Сетевой адрес или имя хоста",
                 value=target_endpoint,
                 key="rtx4070_input_host",
-                help="IP в Tailscale (100.x.y.z), локальный IP (192.168.1.x), туннель Cloudflare или 127.0.0.1"
+                help="IP-адрес в Tailscale (100.x.y.z), локальный адрес (192.168.1.x), адрес туннеля Cloudflare или 127.0.0.1"
             )
         with col_ep2:
             cfg_port = st.number_input(
@@ -781,11 +784,11 @@ with st.sidebar:
             )
 
         cfg_api_key = st.text_input(
-            "API-ключ (если включен на сервере)",
+            "Ключ доступа API (если настроен на сервере)",
             value=rem_cfg.get("api_key", ""),
             type="password",
             key="rtx4070_input_apikey",
-            help="Bearer токен для защиты при доступе через внешний интернет"
+            help="Токен авторизации Bearer для защиты подключения через внешнюю сеть"
         )
 
         rtx_base = server_manager.normalize_rtx4070_url(cfg_endpoint, int(cfg_port))
@@ -803,10 +806,10 @@ with st.sidebar:
                 f"""
                 <div style="background: rgba(48, 209, 88, 0.12); border: 1px solid #30d158; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
                     <div style="font-size: 12px; font-weight: 700; color: #30d158; display: flex; align-items: center; gap: 6px;">
-                        <span>🟢</span><span>RTX 4070 в сети (VRAM активна)</span>
+                        <span>🟢</span><span>RTX 4070 в сети (видеопамять активна)</span>
                     </div>
                     <div style="font-size: 11px; color: #f2f4f8; margin-top: 4px; font-weight: 600;">{active_llm}</div>
-                    <div style="font-size: 10px; color: #8b949e; margin-top: 2px;">Контекст: {ctx_tokens} токенов | Nomic Embed 768-D</div>
+                    <div style="font-size: 10px; color: #8b949e; margin-top: 2px;">Размер контекста: {ctx_tokens} токенов | Векторы Nomic Embed (768 измерений)</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -818,7 +821,7 @@ with st.sidebar:
 
             cur_model_idx = available_models.index(active_llm) if active_llm in available_models else 0
             selected_model_to_load = st.selectbox(
-                "Сменить модель в VRAM",
+                "Сменить модель в видеопамяти",
                 options=available_models,
                 index=cur_model_idx,
                 key="rtx4070_model_switcher"
@@ -837,8 +840,8 @@ with st.sidebar:
                         else:
                             st.error(msg)
             with col_m2:
-                if st.button("❄️ Выгрузить VRAM", key="btn_unload_rtx_vram", use_container_width=True, help="Освободить 12 ГБ VRAM видеокарты"):
-                    with st.spinner("Освобождение VRAM..."):
+                if st.button("❄️ Освободить видеопамять", key="btn_unload_rtx_vram", use_container_width=True, help="Освободить 12 ГБ видеопамяти графического ускорителя"):
+                    with st.spinner("Освобождение видеопамяти..."):
                         ok, msg = server_manager.unload_rtx4070_vram(cfg_endpoint, port=int(cfg_port), api_key=cfg_api_key)
                         if ok:
                             cached_rtx4070_models.clear()
@@ -853,9 +856,9 @@ with st.sidebar:
                 """
                 <div style="background: rgba(255, 159, 10, 0.12); border: 1px solid #ff9f0a; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
                     <div style="font-size: 12px; font-weight: 700; color: #ff9f0a; display: flex; align-items: center; gap: 6px;">
-                        <span>🟡</span><span>RTX 4070 в сети (VRAM свободна / IDLE)</span>
+                        <span>🟡</span><span>RTX 4070 в сети (видеопамять свободна / режим ожидания)</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Видеокарта в покое. Выберите модель для загрузки в GPU:</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Видеокарта находится в режиме ожидания. Выберите модель для загрузки в память:</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -865,8 +868,8 @@ with st.sidebar:
                 available_models = ["Qwen2.5-14B-Instruct-Q4_K_M.gguf", "Llama-3.1-8B-Instruct-Q8_0.gguf"]
 
             chosen_idle_model = st.selectbox("Модель для загрузки", options=available_models, key="rtx4070_idle_model")
-            if st.button("⚡ Загрузить модель в GPU VRAM", key="btn_load_idle_model", use_container_width=True):
-                with st.spinner(f"Загрузка {chosen_idle_model} в VRAM..."):
+            if st.button("⚡ Загрузить модель в видеопамять", key="btn_load_idle_model", use_container_width=True):
+                with st.spinner(f"Загрузка {chosen_idle_model} в видеопамять..."):
                     ok, msg = server_manager.switch_rtx4070_model(cfg_endpoint, chosen_idle_model, port=int(cfg_port), api_key=cfg_api_key)
                     if ok:
                         cached_rtx4070_models.clear()
@@ -884,7 +887,7 @@ with st.sidebar:
                     <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
                         <span>🔴</span><span>Сервер RTX 4070 недоступен</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">{rtx_base} не отвечает. Действия:</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">{rtx_base} не отвечает. Доступные действия:</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -892,14 +895,14 @@ with st.sidebar:
 
             col_off1, col_off2 = st.columns(2)
             with col_off1:
-                if st.button("⚡ Wake-on-LAN", key="btn_wol_rtx4070", use_container_width=True, help="Отправить магический пакет для включения ПК"):
+                if st.button("⚡ Включить ПК (Wake-on-LAN)", key="btn_wol_rtx4070", use_container_width=True, help="Отправить сетевой сигнал Wake-on-LAN для включения компьютера"):
                     ok, msg = server_manager.wake_rtx4070(rem_cfg.get("mac", "00:11:22:33:44:55"))
                     if ok:
                         st.success(msg)
                     else:
                         st.error(msg)
             with col_off2:
-                if st.button("🧪 Старт Mock-сервера", key="btn_start_mock_rtx", use_container_width=True, help="Запустить локальный эмулятор 127.0.0.1:8000"):
+                if st.button("🧪 Запустить тестовый сервер", key="btn_start_mock_rtx", use_container_width=True, help="Запустить локальный тестовый эмулятор API 127.0.0.1:8000"):
                     ok, msg = server_manager.start_rtx4070_mock()
                     if ok:
                         st.success(msg)
@@ -908,13 +911,13 @@ with st.sidebar:
                     else:
                         st.error(msg)
 
-            if st.button("🔄 Проверить статус соединения", key="btn_recheck_rtx4070", use_container_width=True):
+            if st.button("🔄 Проверить подключение", key="btn_recheck_rtx4070", use_container_width=True):
                 server_manager.is_rtx4070_online(cfg_endpoint, int(cfg_port), timeout=1.0, api_key=cfg_api_key, force=True)
                 st.rerun()
 
             llm_model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
 
-        if st.button("💾 Сохранить активный адрес в .env и Waybar", key="btn_save_rtx_cfg", use_container_width=True):
+        if st.button("💾 Сохранить параметры подключения", key="btn_save_rtx_cfg", use_container_width=True):
             ok, msg = server_manager.save_rtx4070_settings(cfg_endpoint, int(cfg_port), cfg_api_key, default_model=llm_model)
             if ok:
                 st.success(msg)
@@ -943,49 +946,49 @@ with st.sidebar:
                 f"""
                 <div style="background: rgba(63, 185, 80, 0.12); border: 1px solid #3fb950; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #3fb950; display: flex; align-items: center; gap: 6px;">
-                        <span>🟢</span><span>LM Studio активен (1234)</span>
+                        <span>🟢</span><span>LM Studio в сети (порт 1234)</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">GPU: {llm_model} | CPU: Nomic Embed</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Видеокарта: {llm_model} | Процессор: Nomic Embed</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
             col_b1, col_b2 = st.columns(2)
             with col_b1:
-                if st.button("🔄 Перезапуск", key="btn_restart_stack", use_container_width=True, help="Перезапустить стек моделей"):
+                if st.button("🔄 Перезапустить стек", key="btn_restart_stack", use_container_width=True, help="Перезапустить стек локальных моделей"):
                     with st.status("Перезагрузка стека моделей...", expanded=True) as status:
                         server_manager.ensure_autonomous_stack(progress_callback=st.write)
                         status.update(label="✅ Стек перезапущен!", state="complete")
                     cached_server_status.clear()
                     st.rerun()
             with col_b2:
-                if st.button("❄️ Выгрузить GPU", key="btn_unload_gpu", use_container_width=True, help="Выгрузить модели из видеопамяти"):
+                if st.button("❄️ Освободить видеопамять", key="btn_unload_gpu", use_container_width=True, help="Выгрузить модели из видеопамяти графического ускорителя"):
                     server_manager.unload_all_models()
                     cached_server_status.clear()
                     st.rerun()
-            if st.button("⏹️ Остановить сервер", key="btn_stop_stack", use_container_width=True, help="Остановить локальный сервер LM Studio"):
+            if st.button("⏹️ Остановить сервер", key="btn_stop_stack", use_container_width=True, help="Остановить локальный сервер инференса LM Studio"):
                 server_manager.stop_local_server()
                 cached_server_status.clear()
                 st.rerun()
         else:
-            status_text = "Сервер выключен 🔴" if not is_online else "Модели не в памяти 🟡"
+            status_text = "Сервер выключен 🔴" if not is_online else "Модели не загружены в память 🟡"
             st.markdown(
                 f"""
                 <div style="background: rgba(248, 81, 73, 0.12); border: 1px solid #f85149; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
                         <span>⚠️</span><span>{status_text}</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Порт 1234. Нажмите для автозапуска:</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Порт 1234. Нажмите для автоматического запуска:</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-            if st.button("⚡ Запустить LM Studio в 1 клик", key="btn_start_autonomous", use_container_width=True):
-                with st.status("Инициализация LM Studio...", expanded=True) as status:
+            if st.button("⚡ Запустить стек моделей в 1 клик", key="btn_start_autonomous", use_container_width=True):
+                with st.status("Инициализация стека LM Studio...", expanded=True) as status:
                     st.write("Запуск сервера на порту 1234...")
                     ok, msg = server_manager.ensure_autonomous_stack(progress_callback=st.write)
                     if ok:
-                        status.update(label="✅ LM Studio запущен и готов!", state="complete")
+                        status.update(label="✅ Стек LM Studio запущен и готов к работе!", state="complete")
                         st.success("Сервер и модели успешно загружены!")
                         time.sleep(1)
                         st.rerun()
@@ -1002,9 +1005,9 @@ with st.sidebar:
                 """
                 <div style="background: rgba(63, 185, 80, 0.12); border: 1px solid #3fb950; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #3fb950; display: flex; align-items: center; gap: 6px;">
-                        <span>🟢</span><span>Ollama активна (11434)</span>
+                        <span>🟢</span><span>Ollama в сети (порт 11434)</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Служба Ollama запущена на хосте</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Служба Ollama активна в операционной системе</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1018,7 +1021,7 @@ with st.sidebar:
                 if "qwen" in m.lower():
                     default_llm_idx = i
                     break
-            llm_model = st.selectbox("LLM модель", llm_candidates, index=default_llm_idx, key="ol_llm_select")
+            llm_model = st.selectbox("Модель генерации (LLM)", llm_candidates, index=default_llm_idx, key="ol_llm_select")
 
             emb_candidates = [m for m in avail_ol if "embed" in m.lower() or "nomic" in m.lower()]
             if not emb_candidates:
@@ -1028,20 +1031,20 @@ with st.sidebar:
                 if "nomic" in m.lower():
                     default_emb_idx = i
                     break
-            embed_model = st.selectbox("Эмбеддинг модель", emb_candidates, index=default_emb_idx, key="ol_emb_select")
+            embed_model = st.selectbox("Модель эмбеддингов", emb_candidates, index=default_emb_idx, key="ol_emb_select")
         else:
             st.markdown(
                 """
                 <div style="background: rgba(248, 81, 73, 0.12); border: 1px solid #f85149; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
-                        <span>⚠️</span><span>Ollama выключена 🔴</span>
+                        <span>⚠️</span><span>Служба Ollama не запущена 🔴</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Порт 11434 не отвечает</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Сетевой порт 11434 не отвечает</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-            if st.button("▶️ Запустить Ollama", key="btn_start_ollama", use_container_width=True):
+            if st.button("▶️ Запустить службу Ollama", key="btn_start_ollama", use_container_width=True):
                 with st.status("Запуск и проверка службы Ollama...", expanded=True) as status:
                     ok, msg = ensure_ollama_stack_safe(progress_callback=st.write)
                     if ok:
@@ -1064,9 +1067,9 @@ with st.sidebar:
                 """
                 <div style="background: rgba(63, 185, 80, 0.12); border: 1px solid #3fb950; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #3fb950; display: flex; align-items: center; gap: 6px;">
-                        <span>🟢</span><span>Docker контейнер активен</span>
+                        <span>🟢</span><span>Контейнеры Docker активны</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Ollama API: :11434 | WebUI: :3000</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Интерфейс Ollama API: :11434 | Веб-интерфейс: :3000</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1078,22 +1081,22 @@ with st.sidebar:
                 st.rerun()
             avail_dk = fetch_models(lm_studio_url, default_models=["qwen2.5:14b", "nomic-embed-text:latest"])
             llm_candidates = [m for m in avail_dk if not ("embed" in m.lower() or "nomic" in m.lower())]
-            llm_model = st.selectbox("LLM модель", llm_candidates if llm_candidates else ["qwen2.5:14b"], key="dk_llm_select")
+            llm_model = st.selectbox("Модель генерации (LLM)", llm_candidates if llm_candidates else ["qwen2.5:14b"], key="dk_llm_select")
             emb_candidates = [m for m in avail_dk if "embed" in m.lower() or "nomic" in m.lower()]
-            embed_model = st.selectbox("Эмбеддинг модель", emb_candidates if emb_candidates else ["nomic-embed-text:latest"], key="dk_emb_select")
+            embed_model = st.selectbox("Модель эмбеддингов", emb_candidates if emb_candidates else ["nomic-embed-text:latest"], key="dk_emb_select")
         else:
             st.markdown(
                 """
                 <div style="background: rgba(248, 81, 73, 0.12); border: 1px solid #f85149; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; font-weight: 700; color: #f85149; display: flex; align-items: center; gap: 6px;">
-                        <span>🐳</span><span>Контейнеры не запущены 🔴</span>
+                        <span>🐳</span><span>Контейнеры Docker остановлены 🔴</span>
                     </div>
-                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Запуск через docker compose up -d</div>
+                    <div style="font-size: 11px; color: #8b949e; margin-top: 4px;">Запуск через команду docker compose up -d</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-            if st.button("🚀 Запустить Docker стек", key="btn_start_docker", use_container_width=True):
+            if st.button("🚀 Запустить контейнеры Docker", key="btn_start_docker", use_container_width=True):
                 with st.status("Запуск Docker контейнеров...", expanded=True) as status:
                     ok, msg = server_manager.start_docker_compose()
                     if ok:
@@ -1109,17 +1112,17 @@ with st.sidebar:
 
     else:
         # Клиентский режим: произвольный URL
-        st.markdown("<div style='font-size: 11px; color: #8b949e; margin-bottom: 4px;'>Подключение к произвольному URL:</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size: 11px; color: #8b949e; margin-bottom: 4px;'>Подключение к внешнему или произвольному URL:</div>", unsafe_allow_html=True)
         lm_studio_url = st.text_input(
-            "Сервер API инференса",
+            "Адрес сервера API инференса",
             value="http://127.0.0.1:1234/v1",
             key="sidebar_server_url",
-            help="Адрес внешнего или локального API сервера инференса (Тип 1: перезагрузка/переподключение)"
+            help="Сетевой адрес внешнего или локального API-сервера инференса (1-й тип: требует переподключения)"
         )
         available_models = fetch_models(lm_studio_url)
         default_llm = "qwen2.5-14b-instruct-1m" if "qwen2.5-14b-instruct-1m" in available_models else available_models[0]
         llm_model = st.selectbox(
-            "Генеративная модель (LLM)",
+            "Модель генерации (LLM)",
             available_models,
             index=available_models.index(default_llm) if default_llm in available_models else 0,
             key="sidebar_llm_model"
@@ -1127,7 +1130,7 @@ with st.sidebar:
         emb_candidates = [m for m in available_models if "embed" in m.lower() or "nomic" in m.lower()]
         default_emb = emb_candidates[0] if emb_candidates else available_models[0]
         embed_model = st.selectbox(
-            "Эмбеддинг модель",
+            "Модель эмбеддингов",
             available_models,
             index=available_models.index(default_emb) if default_emb in available_models else 0,
             key="sidebar_embed_model"
@@ -1138,23 +1141,23 @@ with st.sidebar:
     # Системный статус в сайдбаре
     index_exists = Path(INDEX_FILE).exists()
     status_color = "#3fb950" if index_exists else "#f85149"
-    status_text = "В сети 🟢" if index_exists else "Нет индекса 🔴"
+    status_text = "Готова к работе 🟢" if index_exists else "Индекс отсутствует 🔴"
     
     st.markdown(
         f"""
         <div style="background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: auto;">
-            <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Статус системы</div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Состояние системы</div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                <span style="color: var(--text-muted);">Пайплайн:</span>
+                <span style="color: var(--text-muted);">База документов:</span>
                 <span style="color: {status_color}; font-weight: 600;">{status_text}</span>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                <span style="color: var(--text-muted);">Поисковый движок:</span>
-                <span style="color: var(--accent); font-weight: 500;">Гибридный BM25 + RRF</span>
+                <span style="color: var(--text-muted);">Поисковый механизм:</span>
+                <span style="color: var(--accent); font-weight: 500;">Двухуровневый BM25 + RRF</span>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span style="color: var(--text-muted);">CJK-фильтр:</span>
-                <span style="color: var(--good); font-weight: 500;">Активен 🛡️</span>
+                <span style="color: var(--text-muted);">Фильтр символов:</span>
+                <span style="color: var(--good); font-weight: 500;">Включен 🛡️</span>
             </div>
         </div>
         """,
@@ -1188,7 +1191,7 @@ def render_message(msg: Dict[str, Any]) -> None:
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="4" fill="#1a1029"/><path d="m16 4 11 7v11l-11 7L5 22V11z" fill="#b86afd"/><path d="m16 8 7 5-7 5-7-5zm0 11 7-4v6l-7 4z" fill="#f8cdf3"/><path d="m9 15 6 4v6l-6-4z" fill="#ed48b2"/></svg>
-                        <span style="font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;">EXSCIO · ИИ-Ассистент</span>
+                        <span style="font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;">EXSCIO · Интеллектуальный помощник</span>
                     </div>
                 </div>
                 {reasoning_html}
@@ -1200,7 +1203,7 @@ def render_message(msg: Dict[str, Any]) -> None:
 
         citations = msg.get("citations", [])
         if citations:
-            with st.expander(f"📄 Подтверждающие первоисточники ({len(citations)} фрагментов)"):
+            with st.expander(f"📄 Подтверждающие первоисточники ({len(citations)} фрагм.)"):
                 for idx, c in enumerate(citations, 1):
                     st.markdown(f"**[{idx}]** `{c.get('source', 'Документ')}` *(Страница {c.get('page', 1)})*")
                     if c.get("quote"):
@@ -1218,10 +1221,10 @@ if mode == "💬 Чат с документами":
             f"""
             <div class="chat-header-container">
                 <div>
-                    <div class="tag">ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ</div>
-                    <h2 class="chat-header-title">Чат с документами</h2>
+                    <div class="tag">ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ ДОКУМЕНТОВ</div>
+                    <h2 class="chat-header-title">Диалог с базой документов</h2>
                 </div>
-                <div class="chat-header-stat">Топ-K: {top_k_val} • Лимит токенов: {budget_val}</div>
+                <div class="chat-header-stat">Топ-K: {top_k_val} • Лимит контекста: {budget_val} токенов</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -1241,7 +1244,7 @@ if mode == "💬 Чат с документами":
             render_message(msg)
 
         # 2. Получение нового пользовательского ввода
-        prompt = st.chat_input("Спросите что-нибудь по загруженным документам...")
+        prompt = st.chat_input("Задайте вопрос по загруженным документам...")
         active_user_query = prompt
 
         # 3. Обработка нового запроса (генерация выполняется строго один раз)
@@ -1259,7 +1262,7 @@ if mode == "💬 Чат с документами":
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="4" fill="#1a1029"/><path d="m16 4 11 7v11l-11 7L5 22V11z" fill="#b86afd"/><path d="m16 8 7 5-7 5-7-5zm0 11 7-4v6l-7 4z" fill="#f8cdf3"/><path d="m9 15 6 4v6l-6-4z" fill="#ed48b2"/></svg>
-                                <span style="font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;">EXSCIO · ИИ-Ассистент</span>
+                                <span style="font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;">EXSCIO · Интеллектуальный помощник</span>
                             </div>
                         </div>
                     </div>
@@ -1275,7 +1278,7 @@ if mode == "💬 Чат с документами":
                     top_k = st.session_state.rag_config.get("top_k", 5)
 
                     t_start = time.time()
-                    with st.spinner("Интеллектуальный поиск (Okapi BM25 + Dense-векторы + RRF)..."):
+                    with st.spinner("Интеллектуальный поиск фрагментов (Okapi BM25 + смысловые векторы + RRF)..."):
                         hits, reformulated_q, is_zero = pipeline.retriever.search(
                             raw_query=active_user_query,
                             history=user_history,
@@ -1291,8 +1294,8 @@ if mode == "💬 Чат с документами":
 
                     # Сценарий 1: Zero-Retrieval
                     if is_zero or not hits:
-                        fallback_text = "В предоставленных документах нет информации по этому вопросу."
-                        reasoning_info = "Сработал Zero-Retrieval: подходящие документы не найдены (оценка ниже порога)"
+                        fallback_text = "В предоставленных документах отсутствует достоверная информация по данному вопросу."
+                        reasoning_info = "Защита от галлюцинаций (Zero-Retrieval): подходящие документы не найдены (оценка релевантности ниже порога)"
                         reasoning_placeholder.markdown(f"""<div class="reasoning-step">⚡ {reasoning_info}</div>""", unsafe_allow_html=True)
                         message_placeholder.markdown(fallback_text)
 
@@ -1312,7 +1315,7 @@ if mode == "💬 Чат с документами":
                         )
                         context_tokens = count_tokens(context_xml)
 
-                        reasoning_info = f"Гибридный поиск: отобрано {len(accepted_hits)} фрагментов (BM25 + Dense RRF) • Время поиска: {retrieval_latency:.1f} мс • Токенов контекста: {context_tokens}"
+                        reasoning_info = f"Гибридный поиск: отобрано {len(accepted_hits)} фрагментов (ключевые слова BM25 + смысловые векторы RRF) • Время поиска: {retrieval_latency:.1f} мс • Объем контекста: {context_tokens} токенов"
                         reasoning_placeholder.markdown(f"""<div class="reasoning-step">⚡ {reasoning_info}</div>""", unsafe_allow_html=True)
 
                         # Формирование сообщений для модели
@@ -1345,11 +1348,11 @@ if mode == "💬 Чат с документами":
                                 raw_err = stream_resp.read().decode('utf-8', errors='ignore')
                                 if stream_resp.status_code == 503 and ("model_not_loaded" in raw_err or "VRAM" in raw_err):
                                     err_msg = (
-                                        "⚠️ **Видеопамять RTX 4070 свободна (IDLE)**: Модель не загружена в GPU.\n\n"
-                                        "👉 Откройте боковую панель слева (или индикатор Waybar) и выберите модель для загрузки в VRAM."
+                                        "⚠️ **Видеопамять RTX 4070 свободна (режим ожидания)**: Модель не загружена в память видеокарты.\n\n"
+                                        "👉 Откройте боковую панель слева (или меню Waybar) и загрузите выбранную модель в видеопамять."
                                     )
                                 else:
-                                    err_msg = f"Ошибка инференса ({selected_backend}) [{stream_resp.status_code}]: {raw_err}"
+                                    err_msg = f"Ошибка генерации ответов ({selected_backend}) [{stream_resp.status_code}]: {raw_err}"
                                 message_placeholder.error(err_msg)
                             else:
                                 for line in stream_resp.iter_lines():
@@ -1371,7 +1374,7 @@ if mode == "💬 Чат с документами":
 
                         if not inference_failed:
                             if not raw_response.strip():
-                                message_placeholder.warning("⚠️ Сервер завершил генерацию без вывода текста.")
+                                message_placeholder.warning("⚠️ Сервер завершил генерацию без вывода текстового ответа.")
                             else:
                                 final_sanitized = sanitize_llm_output(raw_response)
                                 message_placeholder.markdown(final_sanitized)
@@ -1387,7 +1390,7 @@ if mode == "💬 Чат с документами":
                                             "page": h.chunk.metadata.page,
                                             "quote": h.chunk.text[:300]
                                         })
-                                    with st.expander(f"📄 Подтверждающие первоисточники ({len(citations_data)} фрагментов)"):
+                                    with st.expander(f"📄 Подтверждающие первоисточники ({len(citations_data)} фрагм.)"):
                                         for idx, c in enumerate(citations_data, 1):
                                             st.markdown(f"**[{idx}]** `{c['source']}` *(Страница {c['page']})*")
                                             st.code(c["quote"], language="text")
@@ -1404,12 +1407,12 @@ if mode == "💬 Чат с документами":
                     err_str = str(e)
                     if any(term in err_str for term in ("Connection refused", "ConnectError", "ConnectTimeout", "NetworkError", "ServerOfflineError", "RemoteLLMError")):
                         message_placeholder.error(
-                            f"❌ **Сервер инференса ({selected_backend}) недоступен или ПК выключен.**\n\n"
-                            f"• Для удаленного ПК: отправьте Wake-on-LAN в боковой панели или через `llm-ctl wake`.\n"
-                            f"• Для автономной работы на ноуте: запустите локальный Mock-сервер в боковой панели или через `llm-ctl start-mock`."
+                            f"❌ **Сервер генерации ({selected_backend}) недоступен или компьютер выключен.**\n\n"
+                            f"• Для удаленного ПК: отправьте сетевой сигнал Wake-on-LAN в боковой панели или через команду `llm-ctl wake`.\n"
+                            f"• Для автономной работы на ноутбуке: запустите локальный тестовый сервер в боковой панели или через команду `llm-ctl start-mock`."
                         )
                     else:
-                        message_placeholder.error(f"Сбой при выполнении запроса: {e}")
+                        message_placeholder.error(f"Сбой при обработке поискового запроса: {e}")
 
 
 # =====================================================================
@@ -1430,19 +1433,19 @@ elif mode == "⚙️ Параметры и модели":
         st.markdown(
             """
             <div style="background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 20px;">
-                <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px;">Категории параметров системы (Классификация типов):</div>
+                <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px;">Классификация параметров конфигурации:</div>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; font-size: 12px;">
                     <div style="background: rgba(237, 72, 178, 0.08); border-left: 3px solid #ed48b2; padding: 8px 10px; border-radius: 4px;">
-                        <b style="color: #f8cdf3;">🔄 1-й тип: Необходима перезагрузка RAG</b><br>
-                        <span style="color: var(--text-muted);">Провайдер инференса, модели LLM и эмбеддингов, URL API. Требуется перезапуск сервиса или переподключение в левой панели.</span>
+                        <b style="color: #f8cdf3;">🔄 1-й тип: Требуется перезагрузка службы RAG</b><br>
+                        <span style="color: var(--text-muted);">Провайдер генерации, модели LLM и эмбеддингов, сетевой адрес API. Требуется перезапуск службы или переподключение в боковой панели.</span>
                     </div>
                     <div style="background: rgba(184, 106, 253, 0.08); border-left: 3px solid #b86afd; padding: 8px 10px; border-radius: 4px;">
-                        <b style="color: #e4bcff;">💾 2-й тип: Необходима переиндексация БД</b><br>
-                        <span style="color: var(--text-muted);">Размер чанка, перекрытие, добавление/удаление файлов. Требуется полный пересчет векторов и BM25 в разделе «База знаний».</span>
+                        <b style="color: #e4bcff;">💾 2-й тип: Требуется переиндексация базы документов</b><br>
+                        <span style="color: var(--text-muted);">Размер текстового фрагмента, перекрытие, добавление или удаление файлов. Требуется полный пересчет векторов и BM25 в разделе «База знаний».</span>
                     </div>
                     <div style="background: rgba(63, 185, 80, 0.08); border-left: 3px solid #3fb950; padding: 8px 10px; border-radius: 4px;">
-                        <b style="color: #7ee787;">⚡ 3-й тип: Мгновенное применение (на лету)</b><br>
-                        <span style="color: var(--text-muted);">Температура, штраф за повторы, Топ-K, лимит токенов, порог Zero-Retrieval, системный промпт. Вступают в силу немедленно.</span>
+                        <b style="color: #7ee787;">⚡ 3-й тип: Мгновенное применение (без перезагрузки)</b><br>
+                        <span style="color: var(--text-muted);">Вариативность ответов (температура), штраф за повторы, Топ-K, лимит контекста, порог отсечения галлюцинаций, системная инструкция. Применяются немедленно.</span>
                     </div>
                 </div>
             </div>
@@ -1455,91 +1458,90 @@ elif mode == "⚙️ Параметры и модели":
             st.markdown(
                 """
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Настройки поиска</h3>
-                    <span style="background: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #7ee787; font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">⚡ 3-й тип (на лету)</span>
+                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Параметры извлечения документов</h3>
+                    <span style="background: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #7ee787; font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">⚡ 3-й тип (без перезагрузки)</span>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
             st.session_state.rag_config["top_k"] = st.slider(
-                "Число извлекаемых фрагментов (Топ-K)",
+                "Количество извлекаемых фрагментов (Топ-K)",
                 min_value=2,
                 max_value=12,
                 value=st.session_state.rag_config.get("top_k", 5),
                 key="pref_slider_top_k",
-                help="Количество лучших чанков, отбираемых гибридным поиском BM25 + Dense RRF"
+                help="Количество наиболее релевантных текстовых фрагментов, отбираемых гибридным алгоритмом BM25 + смысловые векторы RRF"
             )
             st.session_state.rag_config["context_limit"] = st.slider(
-                "Бюджет токенов контекста (лимит токенов)",
+                "Лимит объема контекста (в токенах)",
                 min_value=1000,
                 max_value=4000,
                 value=st.session_state.rag_config.get("context_limit", 2500),
                 step=100,
                 key="pref_slider_context_limit",
-                help="Максимальный объем текстового контекста, передаваемого в модель"
+                help="Максимальный суммарный объем текста документов, передаваемый языковой модели"
             )
             st.session_state.rag_config["confidence_thresh"] = st.slider(
-                "Порог уверенности (Zero-Retrieval)",
+                "Порог уверенности для ответа (защита от галлюцинаций Zero-Retrieval)",
                 min_value=0.005,
                 max_value=0.05,
                 value=st.session_state.rag_config.get("confidence_thresh", 0.015),
                 step=0.005,
                 key="pref_slider_confidence_thresh",
-                help="Если релевантность ниже порога, система прямо сообщает об отсутствии данных"
+                help="Если оценка соответствия найденных фрагментов ниже заданного порога, система прямо сообщает об отсутствии данных во избежание галлюцинаций"
             )
 
         with col2:
             st.markdown(
                 """
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Параметры генерации</h3>
-                    <span style="background: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #7ee787; font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">⚡ 3-й тип (на лету)</span>
+                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Параметры генерации ответов</h3>
+                    <span style="background: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #7ee787; font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">⚡ 3-й тип (без перезагрузки)</span>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
             st.session_state.rag_config["temperature"] = st.slider(
-                "Температура модели (креативность / детерминизм)",
+                "Степень вариативности ответов (температура модели)",
                 min_value=0.0,
                 max_value=1.0,
                 value=st.session_state.rag_config.get("temperature", 0.2),
                 step=0.05,
                 key="pref_slider_temperature",
-                help="0.0 — максимально строгие факты, 1.0 — более свободные формулировки"
+                help="0.0 — максимально строгое следование фактам; более высокие значения повышают связность и гибкость изложения"
             )
             st.session_state.rag_config["presence_pen"] = st.slider(
-                "Штраф за повторы (Presence Penalty)",
+                "Штраф за повторение фраз (Presence Penalty)",
                 min_value=0.0,
                 max_value=1.0,
                 value=st.session_state.rag_config.get("presence_pen", 0.1),
                 step=0.05,
                 key="pref_slider_presence_pen",
-                help="Предотвращает зацикливание и повторение одних и тех же фраз"
+                help="Снижает вероятность повторения одних и тех же фраз и формулировок в процессе генерации текста"
             )
-            st.info("🛡️ Автоматический CJK-фильтр: активирован на постоянной основе (все китайские иероглифы и посторонние символы отсекаются).")
+            st.info("🛡️ Автоматический фильтр символов: включен постоянно (любые нераспознанные символы и иероглифы автоматически отсекаются при потоковом выводе).")
 
         st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 20px 0;'>", unsafe_allow_html=True)
         st.markdown(
             """
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Инструкция агента</h3>
+                    <h3 style="margin: 0; color: var(--text); font-size: 18px;">Системная инструкция ИИ-ассистента</h3>
                 </div>
                 <span style="background: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #7ee787; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600;">⚡ 3-й тип: Мгновенное применение (без перезагрузки)</span>
             </div>
             """,
             unsafe_allow_html=True
         )
-        st.subheader("Инструкция агента")
-        st.caption("Вы можете редактировать системную инструкцию ИИ-ассистента прямо здесь. Изменения сохраняются и применяются немедленно ко всем последующим ответам в чате без перезапуска.")
+        st.caption("Вы можете редактировать системную инструкцию интеллектуального помощника прямо здесь. Изменения сохраняются и применяются немедленно ко всем последующим ответам в чате без перезапуска.")
 
         current_prompt_val = st.session_state.get("custom_system_prompt", RAGPipeline.SYSTEM_PROMPT)
         edited_sys_prompt = st.text_area(
-            "Системная инструкция EXSCIO RAG",
+            "Системная инструкция для модели генерации EXSCIO RAG",
             value=current_prompt_val,
             height=220,
             key="pref_textarea_sysprompt",
-            help="Инструкция определяет роль модели, правила цитирования, изоляцию тегов <context> и запрет посторонних символов."
+            help="Инструкция регламентирует поведение модели, правила цитирования первоисточников, изоляцию данных внутри тегов <context> и недопущение искажения фактов."
         )
 
         col_sp1, col_sp2 = st.columns([1, 1])
@@ -1548,9 +1550,9 @@ elif mode == "⚙️ Параметры и модели":
                 st.session_state["custom_system_prompt"] = edited_sys_prompt
                 st.success("✅ Системная инструкция успешно сохранена и активирована для всех последующих ответов!")
         with col_sp2:
-            if st.button("🔄 Сбросить к стандартной", key="btn_reset_system_prompt", use_container_width=True):
+            if st.button("🔄 Восстановить стандартную", key="btn_reset_system_prompt", use_container_width=True):
                 st.session_state["custom_system_prompt"] = RAGPipeline.SYSTEM_PROMPT
-                st.info("ℹ️ Системная инструкция сброшена к исходной стандартной инструкции EXSCIO.")
+                st.info("ℹ️ Системная инструкция возвращена к исходным заводским настройкам EXSCIO.")
                 st.rerun()
 
 
@@ -1561,8 +1563,8 @@ elif mode == "📚 База знаний":
     with st.container():
         st.markdown(
             """
-            <div class="tag">ХРАНИЛИЩЕ ЗНАНИЙ</div>
-            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: var(--text);">База документов и индексация</h2>
+            <div class="tag">БАЗА ЗНАНИЙ И ДОКУМЕНТЫ</div>
+            <h2 style="margin: 0; padding: 0; font-size: 26px; font-weight: 700; color: var(--text);">Управление базой знаний и индексация</h2>
             """,
             unsafe_allow_html=True
         )
@@ -1573,13 +1575,13 @@ elif mode == "📚 База знаний":
 
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         with col_m1:
-            st.metric("Фрагментов в индексе", f"{chunk_count:,}")
+            st.metric("Фрагментов в поисковом индексе", f"{chunk_count:,}")
         with col_m2:
-            st.metric("Документов в data/", f"{len(all_data_files)}")
+            st.metric("Файлов в папке data/", f"{len(all_data_files)}")
         with col_m3:
-            st.metric("Векторный индекс", "768-D (Nomic Embed)")
+            st.metric("Векторный индекс", "768 измерений (Nomic Embed)")
         with col_m4:
-            st.metric("Лексический индекс", "Okapi BM25 (активен)")
+            st.metric("Поиск по ключевым словам", "Okapi BM25 (активен)")
 
         st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
 
@@ -1588,21 +1590,20 @@ elif mode == "📚 База знаний":
             """
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <h3 style="margin: 0; color: var(--text); font-size: 18px;">📁 Добавление документов в базу знаний</h3>
-                <span style="background: rgba(184, 106, 253, 0.15); border: 1px solid #b86afd; color: #e4bcff; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600;">💾 2-й тип: Требуется переиндексация БД</span>
+                <span style="background: rgba(184, 106, 253, 0.15); border: 1px solid #b86afd; color: #e4bcff; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600;">💾 2-й тип: Требуется переиндексация базы</span>
             </div>
             """,
             unsafe_allow_html=True
         )
-        st.subheader("📁 Добавление документов в базу знаний")
         uploaded_files = st.file_uploader(
-            "Перетащите новые файлы (PDF, TXT, MD) для загрузки в корпоративную базу знаний:",
+            "Перетащите файлы (PDF, TXT, MD) для добавления в базу знаний:",
             type=["pdf", "txt", "md"],
             accept_multiple_files=True,
             key="kb_file_uploader"
         )
 
         if uploaded_files:
-            if st.button(f"📥 Сохранить {len(uploaded_files)} файл(ов) в data/ и подготовить к индексации", key="kb_save_files_btn", use_container_width=True):
+            if st.button(f"📥 Сохранить {len(uploaded_files)} файл(ов) в папку data/", key="kb_save_files_btn", use_container_width=True):
                 DATA_DIR.mkdir(parents=True, exist_ok=True)
                 saved_count = 0
                 for uf in uploaded_files:
@@ -1611,36 +1612,36 @@ elif mode == "📚 База знаний":
                         f.write(uf.getbuffer())
                     saved_count += 1
                 cached_data_files.clear()
-                st.success(f"✅ Успешно сохранено {saved_count} документов в каталог {DATA_DIR}. Запустите переиндексацию ниже.")
+                st.success(f"✅ Успешно сохранено {saved_count} документов в папку {DATA_DIR}. Запустите переиндексацию базы ниже.")
                 st.rerun()
 
         if all_data_files:
-            with st.expander(f"📑 Список документов в каталоге data/ ({len(all_data_files)} файлов)", expanded=False):
+            with st.expander(f"📑 Список документов в папке data/ ({len(all_data_files)} файлов)", expanded=False):
                 col_f1, col_f2 = st.columns(2)
                 for idx, fpath in enumerate(all_data_files[:30]):
                     target_col = col_f1 if idx % 2 == 0 else col_f2
                     size_kb = fpath.stat().st_size / 1024
                     target_col.markdown(f"- 📄 `{fpath.name}` *(~{size_kb:.1f} КБ)*")
                 if len(all_data_files) > 30:
-                    st.caption(f"... и еще {len(all_data_files) - 30} документов в каталоге data/")
+                    st.caption(f"... и еще {len(all_data_files) - 30} документов в папке data/")
 
         st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 24px 0;'>", unsafe_allow_html=True)
 
         # 2. Интерактивный плейграунд поиска для демонстрации
-        st.subheader("🔎 Интерактивный плейграунд поиска (Тест ранжирования RRF)")
-        st.caption("Позволяет мгновенно проверить извлечение первоисточников без вызова генеративной модели LLM. Показывает точные баллы BM25, косинусную близость эмбеддингов и RRF-ранг.")
+        st.subheader("🔎 Проверка поискового механизма (Тестирование ранжирования RRF)")
+        st.caption("Позволяет проверить поиск по документам без обращения к генеративной языковой модели. Отображает точные баллы соответствия BM25, векторную близость и итоговый ранг RRF.")
 
         test_q = st.text_input(
-            "Тестовый поисковый запрос:",
+            "Контрольный поисковый запрос:",
             value="какая одежда нужна для ученика 5-9 класса",
             key="kb_test_query_input"
         )
-        if st.button("🔍 Выполнить тестовый поиск", key="kb_btn_test_search", use_container_width=True):
+        if st.button("🔍 Выполнить проверку поиска", key="kb_btn_test_search", use_container_width=True):
             if not index_exists:
-                st.error("Индекс не найден. Сначала выполните индексацию.")
+                st.error("Поисковый индекс не найден. Сначала выполните переиндексацию базы данных.")
             else:
                 t0 = time.time()
-                with st.spinner("Извлечение фрагментов через Okapi BM25 + Dense 768-D + RRF..."):
+                with st.spinner("Извлечение фрагментов через Okapi BM25 + векторное сходство + RRF..."):
                     test_pipeline = get_pipeline(llm_model=llm_model, embed_model=embed_model, base_url=lm_studio_url)
                     test_hits, reformulated, is_zero = test_pipeline.retriever.search(
                         raw_query=test_q,
@@ -1649,24 +1650,24 @@ elif mode == "📚 База знаний":
                 elapsed_ms = (time.time() - t0) * 1000
 
                 if is_zero or not test_hits:
-                    st.warning("⚠️ Сработал порог Zero-Retrieval: подходящих документов не обнаружено.")
+                    st.warning("⚠️ Сработал порог защиты Zero-Retrieval: подходящих документов в базе не обнаружено.")
                 else:
                     st.success(f"✅ Извлечено **{len(test_hits)}** фрагментов за **{elapsed_ms:.1f} мс** (Запрос: `{reformulated}`)")
 
                     for r, hit in enumerate(test_hits, 1):
-                        with st.expander(f"Ранг #{r} | 📄 {hit.chunk.source} (Стр. {hit.chunk.page}) — RRF: {hit.rrf_score:.5f}", expanded=(r == 1)):
-                            st.markdown(f"**Источник:** `{hit.chunk.source}` • **Страница:** `{hit.chunk.page}` • **ID:** `{hit.chunk.chunk_id}`")
-                            st.markdown(f"**Оценки:** RRF: `{hit.rrf_score:.5f}` | BM25 ранг: `#{hit.bm25_rank}` (score {hit.bm25_score:.2f}) | Векторный ранг: `#{hit.dense_rank}` (score {hit.dense_score:.4f})")
-                            st.text_area("Фрагмент текста", value=hit.chunk.content, height=120, disabled=True, key=f"kb_hit_text_{r}")
+                        with st.expander(f"Позиция #{r} | 📄 {hit.chunk.source} (Стр. {hit.chunk.page}) — Балл RRF: {hit.rrf_score:.5f}", expanded=(r == 1)):
+                            st.markdown(f"**Документ:** `{hit.chunk.source}` • **Страница:** `{hit.chunk.page}` • **Идентификатор фрагмента:** `{hit.chunk.chunk_id}`")
+                            st.markdown(f"**Показатели релевантности:** Балл RRF: `{hit.rrf_score:.5f}` | Ранг BM25: `#{hit.bm25_rank}` (балл {hit.bm25_score:.2f}) | Векторный ранг: `#{hit.dense_rank}` (сходство {hit.dense_score:.4f})")
+                            st.text_area("Содержимое фрагмента", value=hit.chunk.content, height=120, disabled=True, key=f"kb_hit_text_{r}")
 
                     # Lost-in-the-Middle распределение
                     reordered = test_pipeline.retriever.reorder_lost_in_the_middle(test_hits)
-                    st.markdown("**Раскладка контекста в промпте (Lost-in-the-Middle mitigation):**")
+                    st.markdown("**Распределение фрагментов в контексте (компенсация эффекта Lost-in-the-Middle):**")
                     cols = st.columns(len(reordered))
                     for i, (col, rh) in enumerate(zip(cols, reordered)):
                         orig_r = test_hits.index(rh) + 1
                         with col:
-                            st.info(f"Позиция #{i+1}\n(Ранг #{orig_r})")
+                            st.info(f"Позиция в тексте #{i+1}\n(Ранг #{orig_r})")
 
         st.markdown("<hr style='border: none; border-bottom: 1px solid #30363d; margin: 24px 0;'>", unsafe_allow_html=True)
 
@@ -1675,37 +1676,36 @@ elif mode == "📚 База знаний":
             """
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <h3 style="margin: 0; color: var(--text); font-size: 18px;">⚙️ Параметры индексации и переиндексация базы</h3>
-                <span style="background: rgba(184, 106, 253, 0.15); border: 1px solid #b86afd; color: #e4bcff; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600;">💾 2-й тип: Требуется переиндексация БД</span>
+                <span style="background: rgba(184, 106, 253, 0.15); border: 1px solid #b86afd; color: #e4bcff; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600;">💾 2-й тип: Требуется переиндексация базы</span>
             </div>
             """,
             unsafe_allow_html=True
         )
-        st.subheader("⚙️ Параметры индексации и переиндексация базы")
         col_s1, col_s2 = st.columns(2)
         with col_s1:
             chunk_size_input = st.slider(
-                "Размер чанка (символов) 💾 [2-й тип]",
+                "Размер текстового фрагмента (символов) 💾 [2-й тип]",
                 min_value=300,
                 max_value=2000,
                 value=800,
                 step=50,
                 key="kb_slider_chunk_size",
-                help="Длина фрагмента текста при нарезке документов. Требует полной переиндексации базы."
+                help="Длина фрагмента текста при нарезке документов. Изменение параметра требует полной переиндексации базы знаний."
             )
         with col_s2:
             overlap_input = st.slider(
-                "Перекрытие чанков (символов) 💾 [2-й тип]",
+                "Перекрытие соседних фрагментов (символов) 💾 [2-й тип]",
                 min_value=50,
                 max_value=400,
                 value=150,
                 step=25,
                 key="kb_slider_overlap",
-                help="Количество символов взаимного наложения между соседними фрагментами."
+                help="Количество символов взаимного наложения между соседними фрагментами для сохранения смысловой непрерывности."
             )
 
         if st.button("🔄 Запустить полную переиндексацию базы", key="kb_btn_reindex", use_container_width=True):
             status_box = st.empty()
-            status_box.info("Сканирование каталога data/ (PDF, TXT, DOCX, XLSX)...")
+            status_box.info("Сканирование каталога data/ (форматы PDF, TXT, MD, DOCX)...")
 
             dense_store = DenseVectorStore(model_name=embed_model, base_url=lm_studio_url, device="cpu")
             ingestion = DocumentIngestionPipeline(chunk_size=chunk_size_input, chunk_overlap=overlap_input)
@@ -1718,10 +1718,10 @@ elif mode == "📚 База знаний":
                 st.cache_resource.clear()
                 cached_index_stats.clear()
                 cached_data_files.clear()
-                status_box.success(f"✅ Индексация завершена! Всего создано {len(chunks)} чанков с метаданными и векторами.")
+                status_box.success(f"✅ Переиндексация успешно завершена! Создано {len(chunks)} текстовых фрагментов с метаданными и векторными эмбеддингами.")
                 st.rerun()
             else:
-                status_box.error("Документы не найдены в каталоге data/.")
+                status_box.error("Документы для индексации не найдены в каталоге data/.")
 
 
 # =====================================================================
@@ -1748,7 +1748,7 @@ elif mode == "📊 Архитектура и демонстрация":
                 <span class="arch-badge badge-hybrid">Ядро архитектуры</span>
                 <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">1. Двухуровневый гибридный поиск (Hybrid Retrieval)</h3>
                 <div style="font-size: 14px; line-height: 1.6; color: var(--text);">
-                    В отличие от примитивных векторных баз, система EXSCIO RAG использует синергию двух взаимодополняющих подходов:
+                    В отличие от базовых векторных баз, система EXSCIO RAG использует синергию двух взаимодополняющих подходов:
                     <ul>
                         <li><b>Лексический уровень (Okapi BM25)</b>: гарантирует безошибочное нахождение точных наименований, номеров приказов, дат, классов, ГОСТов и специализированной терминологии.</li>
                         <li><b>Семантический уровень (Dense 768-D)</b>: векторная модель <code>nomic-embed-text-v1.5</code> улавливает концептуальный смысл запроса даже при несовпадении ключевых слов.</li>
@@ -1764,11 +1764,11 @@ elif mode == "📊 Архитектура и демонстрация":
         st.markdown(
             """
             <div class="arch-card">
-                <span class="arch-badge badge-arch">Оптимизация внимания LLM</span>
+                <span class="arch-badge badge-arch">Оптимизация внимания языковой модели</span>
                 <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">2. Устранение эффекта «Lost-in-the-Middle»</h3>
                 <div style="font-size: 14px; line-height: 1.6; color: var(--text);">
                     Исследования трансформерных архитектур доказали, что большие языковые модели лучше всего усваивают информацию в самом начале и в самом конце контекстного окна (U-образная кривая внимания), часто «забывая» факты в середине.<br><br>
-                    <b>Решение EXSCIO RAG:</b> контекстный компоновщик переупорядочивает отобранные фрагменты, размещая наивысшие по релевантности чанки по краям промпта, что повышает фактическую точность ответов более чем на 35%.
+                    <b>Решение EXSCIO RAG:</b> контекстный компоновщик переупорядочивает отобранные фрагменты, размещая наиболее релевантные данные по краям контекста, что повышает фактическую точность ответов более чем на 35%.
                 </div>
             </div>
             """,
@@ -1780,13 +1780,13 @@ elif mode == "📊 Архитектура и демонстрация":
             """
             <div class="arch-card">
                 <span class="arch-badge badge-security">Безопасность и соответствие стандартам</span>
-                <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">3. 100% On-Premises & Защита от утечек данных</h3>
+                <h3 style="margin: 0 0 12px 0; color: var(--text); font-size: 18px;">3. Полная автономность (On-Premises) и защита данных</h3>
                 <div style="font-size: 14px; line-height: 1.6; color: var(--text);">
                     <ul>
-                        <li><b>Локальный контур инференса:</b> Все модели (LLM и эмбеддинги) исполняются локально на GPU. Ни один байт конфиденциальных документов не передается во внешние облачные сервисы.</li>
+                        <li><b>Локальный контур вычислений:</b> Все модели (генеративные языковые модели и модели эмбеддингов) выполняются локально на аппаратных ресурсах. Ни один байт конфиденциальных документов не передается во внешние облачные сервисы.</li>
                         <li><b>Защита от Prompt Injection:</b> Изоляция извлеченных данных внутри строгих XML-тегов <code>&lt;context&gt;</code> блокирует попытки подмены инструкций модели через текст документов.</li>
-                        <li><b>Защита от галлюцинаций (Zero-Retrieval):</b> При отсутствии надежных первоисточников система прямо сообщает об отсутствии данных, предотвращая выдумки.</li>
-                        <li><b>Аппаратный CJK-фильтр:</b> Специальный потоковый санитайзер исключает проникновение паразитных иероглифов при многоязычном сэмплировании.</li>
+                        <li><b>Защита от галлюцинаций (Zero-Retrieval):</b> При отсутствии достоверных подтверждений в документах система прямо сообщает об отсутствии данных, предотвращая домысливание.</li>
+                        <li><b>Потоковый фильтр символов:</b> Автоматический фильтр символов исключает проникновение посторонних токенов и иероглифов при многоязычном выводе.</li>
                     </ul>
                 </div>
             </div>
@@ -1800,24 +1800,24 @@ elif mode == "📊 Архитектура и демонстрация":
             """
 | Характеристика | Базовые векторные RAG-решения | Корпоративный EXSCIO RAG 2.0 |
 | :--- | :--- | :--- |
-| **Метод поиска** | Только косинусное сходство (теряет точные термины/номера) | **Гибридный (Okapi BM25 + Dense 768-D + RRF)** |
-| **Эффект «середины»** | Не учитывается (потеря фактов в длинном контексте) | **Оптимизированная U-раскладка Lost-in-the-Middle** |
-| **Галлюцинации** | Высокий риск домысливания | **Zero-Retrieval порог + подтверждающие цитаты со страницами** |
-| **Языковая чистота** | Возможна утечка посторонних токенов/иероглифов | **Потоковый регулярный CJK-санитайзер** |
+| **Метод поиска** | Только косинусное сходство (теряет точные термины/номера) | **Двухуровневый (Okapi BM25 + Dense 768-D + RRF)** |
+| **Эффект «середины»** | Не учитывается (потеря фактов в длинном контексте) | **Оптимизированная U-образная раскладка Lost-in-the-Middle** |
+| **Защита от галлюцинаций** | Высокий риск домысливания | **Zero-Retrieval порог + подтверждающие цитаты со страницами** |
+| **Чистота текста** | Возможна утечка посторонних токенов/иероглифов | **Потоковый фильтр символов (санитайзер)** |
 | **Конфиденциальность** | Часто зависит от сторонних API | **100% локальное исполнение (Air-Gapped Ready)** |
-| **Готовность к внедрению**| Требует сложной настройки окружения | **1-Click запуск автономного стека + десктопное приложение** |
+| **Готовность к внедрению**| Требует сложной настройки окружения | **Запуск автономного стека в 1 клик + десктопное приложение** |
             """
         )
 
         # Метрики качества
-        st.markdown("<h3 style='color: var(--text); font-size: 18px; margin-top: 24px;'>Контрольные показатели эффективности (Бенчмарки)</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color: var(--text); font-size: 18px; margin-top: 24px;'>Контрольные показатели эффективности (Метрики качества)</h3>", unsafe_allow_html=True)
         col_b1, col_b2, col_b3, col_b4 = st.columns(4)
         with col_b1:
-            st.metric("MRR@5 (Качество ранжирования)", "0.94", "+38% vs Dense")
+            st.metric("MRR@5 (Точность ранжирования)", "0.94", "+38% по сравнению с Dense")
         with col_b2:
-            st.metric("Hit Rate@5 (Полнота выборки)", "98.2%", "+24% vs BM25")
+            st.metric("Hit Rate@5 (Полнота выборки)", "98.2%", "+24% по сравнению с BM25")
         with col_b3:
             st.metric("Средняя задержка поиска", "35-45 мс", "Высокая скорость")
         with col_b4:
-            st.metric("Фильтрация галлюцинаций", "100%", "Zero-Retrieval")
+            st.metric("Фильтрация галлюцинаций", "100%", "Механизм Zero-Retrieval")
 
