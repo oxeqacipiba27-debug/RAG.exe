@@ -15,6 +15,8 @@ echo ""
 PY_CMD="python3"
 if [ -f "$SCRIPT_DIR/venv/bin/python" ]; then
     PY_CMD="$SCRIPT_DIR/venv/bin/python"
+elif [ -f "$SCRIPT_DIR/RAG.exe-linux/venv/bin/python" ]; then
+    PY_CMD="$SCRIPT_DIR/RAG.exe-linux/venv/bin/python"
 elif [ -f "$SCRIPT_DIR/venv/bin/python3" ]; then
     PY_CMD="$SCRIPT_DIR/venv/bin/python3"
 elif command -v python3 >/dev/null 2>&1; then

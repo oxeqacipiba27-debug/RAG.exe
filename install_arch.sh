@@ -141,27 +141,44 @@ echo -e "${BLUE}[5/7] Интеграция в графическое меню п
 
 APPS_DIR="$HOME/.local/share/applications"
 ICONS_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
-mkdir -p "$APPS_DIR" "$ICONS_DIR"
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$APPS_DIR" "$ICONS_DIR" "$BIN_DIR"
 
-if [ -f "$SCRIPT_DIR/static/exscio.png" ]; then
-    cp "$SCRIPT_DIR/static/exscio.png" "$ICONS_DIR/exscio.png"
-elif [ -f "$SCRIPT_DIR/rag_icon.png" ]; then
+if [ -f "$SCRIPT_DIR/rag_icon.png" ]; then
     cp "$SCRIPT_DIR/rag_icon.png" "$ICONS_DIR/exscio.png"
+elif [ -f "$SCRIPT_DIR/static/exscio.png" ]; then
+    cp "$SCRIPT_DIR/static/exscio.png" "$ICONS_DIR/exscio.png"
 fi
+
+cat > "$BIN_DIR/exscio" <<EOF
+#!/usr/bin/env bash
+TARGET_DIR="$SCRIPT_DIR"
+if [ ! -d "\$TARGET_DIR" ]; then
+    echo "[X] Ошибка: Директория EXSCIO '\$TARGET_DIR' не найдена." >&2
+    exit 1
+fi
+cd "\$TARGET_DIR"
+exec "\$TARGET_DIR/start.sh" "\$@"
+EOF
+chmod +x "$BIN_DIR/exscio"
 
 cat > "$APPS_DIR/exscio.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=EXSCIO
-GenericName=Enterprise RAG AI Assistant
-Comment=Autonomous Enterprise RAG System with local LLM and vector search
-Exec=$SCRIPT_DIR/start.sh
+GenericName=Интеллектуальный RAG-ассистент
+GenericName[en]=Enterprise RAG AI Assistant
+GenericName[ru]=Интеллектуальный RAG-ассистент
+Comment=Автономная корпоративная RAG-система с локальными LLM и поиском по документам
+Comment[en]=Autonomous Enterprise RAG System with local LLM and vector search
+Comment[ru]=Автономная корпоративная RAG-система с локальными LLM и поиском по документам
+Exec=$BIN_DIR/exscio
 Icon=exscio
 Path=$SCRIPT_DIR
 Terminal=false
 Categories=Office;Development;ArtificialIntelligence;Utility;
-Keywords=AI;RAG;LLM;Search;Ollama;LMStudio;
+Keywords=exscio;EXSCIO;RAG;AI;LLM;Search;Ollama;LMStudio;ИИ;Поиск;Документы;Ассистент;
 StartupNotify=true
 StartupWMClass=EXSCIO
 EOF
@@ -171,7 +188,11 @@ chmod +x "$APPS_DIR/exscio.desktop"
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" >/dev/null 2>&1 || true
+fi
 echo -e "${GREEN}[✓] Ярлык приложения создан: $APPS_DIR/exscio.desktop${NC}"
+echo -e "${GREEN}[✓] Командная строка: $BIN_DIR/exscio${NC}"
 
 # 6. Регистрация пользовательских служб systemd
 echo ""
