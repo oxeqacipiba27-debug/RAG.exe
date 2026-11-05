@@ -189,15 +189,49 @@ class Remote4070Client:
     def check_health(self) -> Dict[str, Any]:
         """
         Verify server connectivity and VRAM state.
+        Supports both custom /health endpoint and standard OpenAI /v1/models (LM Studio / vLLM).
         Raises ServerOfflineError with troubleshooting steps if unreachable.
         """
         url = f"{self.base_url}/health"
         try:
             resp = self.http_client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-            return data
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 404 or resp.status_code >= 400:
+                # Fallback to /v1/models for LM Studio / standard OpenAI servers
+                v1_resp = self.http_client.get(f"{self.base_url}/v1/models")
+                if v1_resp.status_code == 200:
+                    data = v1_resp.json()
+                    models_list = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
+                    llm_models = [m for m in models_list if not ("embed" in m.lower() or "nomic" in m.lower())]
+                    active_llm = llm_models[0] if llm_models else (models_list[0] if models_list else "qwen2.5-14b-instruct-1m")
+                    return {
+                        "status": "online",
+                        "loaded_llm": active_llm,
+                        "embedding_active": True,
+                        "ctx_size": self.default_ctx,
+                        "server_type": "lm_studio",
+                    }
+                resp.raise_for_status()
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError, httpx.HTTPError) as err:
+            # Final attempt to probe /v1/models directly
+            try:
+                v1_resp = self.http_client.get(f"{self.base_url}/v1/models")
+                if v1_resp.status_code == 200:
+                    data = v1_resp.json()
+                    models_list = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
+                    llm_models = [m for m in models_list if not ("embed" in m.lower() or "nomic" in m.lower())]
+                    active_llm = llm_models[0] if llm_models else (models_list[0] if models_list else "qwen2.5-14b-instruct-1m")
+                    return {
+                        "status": "online",
+                        "loaded_llm": active_llm,
+                        "embedding_active": True,
+                        "ctx_size": self.default_ctx,
+                        "server_type": "lm_studio",
+                    }
+            except Exception:
+                pass
+
             raise ServerOfflineError(
                 f"\n[X] [CONNECTION FAILED] Unable to reach RTX 4070 Server at {self.base_url}.\n"
                 f"   Reason: {type(err).__name__} ({err})\n\n"
@@ -210,10 +244,25 @@ class Remote4070Client:
 
     def list_models(self) -> Dict[str, Any]:
         """List available GGUF models on disk and currently active model."""
-        self.check_health()
-        resp = self.http_client.get(f"{self.base_url}/admin/models")
-        resp.raise_for_status()
-        return resp.json()
+        health = self.check_health()
+        try:
+            resp = self.http_client.get(f"{self.base_url}/admin/models")
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+
+        # Fallback for LM Studio / OpenAI endpoints
+        try:
+            v1_resp = self.http_client.get(f"{self.base_url}/v1/models")
+            if v1_resp.status_code == 200:
+                data = v1_resp.json()
+                models = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+                active = health.get("loaded_llm") or (models[0] if models else "qwen2.5-14b-instruct-1m")
+                return {"available_gguf": models, "active_llm": active}
+        except Exception:
+            pass
+        return {"available_gguf": [health.get("loaded_llm", "qwen2.5-14b-instruct-1m")], "active_llm": health.get("loaded_llm")}
 
     def switch_model(self, model_name: str, ctx_size: Optional[int] = None) -> Dict[str, Any]:
         """Switch or load a model into GPU VRAM."""

@@ -422,7 +422,25 @@ def get_loaded_models(base_url: str = DEFAULT_BASE_URL, timeout: float = 2.0) ->
                         mid = m.get("id")
                         if mid:
                             loaded_ids.append(mid)
-                return loaded_ids
+                if loaded_ids:
+                    return loaded_ids
+    except Exception:
+        pass
+
+    # Fallback на стандартный /v1/models для удаленного LM Studio
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            v1_url = f"{norm_url}/models" if norm_url.endswith("/v1") else f"{norm_url}/v1/models"
+            resp = client.get(v1_url)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                loaded_ids = []
+                for m in data:
+                    mid = m.get("id") if isinstance(m, dict) else str(m)
+                    if mid:
+                        loaded_ids.append(mid)
+                if loaded_ids:
+                    return loaded_ids
     except Exception:
         pass
 
@@ -1031,7 +1049,7 @@ def is_rtx4070_online(
     force: bool = False,
     cache_ttl: float = 2.0
 ) -> bool:
-    """Быстрая проверка доступности /health эндпоинта удаленного хоста RTX 4070 с потокобезопасным TTL-кэшированием."""
+    """Быстрая проверка доступности эндпоинта удаленного хоста RTX 4070 (/health или /v1/models для LM Studio)."""
     cache_key = f"online_{endpoint}_{port}"
     now = time.time()
     if force:
@@ -1051,9 +1069,24 @@ def is_rtx4070_online(
     try:
         with httpx.Client(timeout=timeout, trust_env=False) as client:
             resp = client.get(f"{base_url}/health", headers=headers)
-            res = (resp.status_code == 200)
+            if resp.status_code == 200:
+                res = True
+            elif resp.status_code == 404 or resp.status_code >= 400:
+                # Fallback: проверка LM Studio / OpenAI эндпоинта /v1/models
+                v1_resp = client.get(f"{base_url}/v1/models", headers=headers)
+                if v1_resp.status_code == 200:
+                    res = True
+                else:
+                    root_resp = client.get(f"{base_url}/models", headers=headers)
+                    res = (root_resp.status_code == 200)
     except Exception:
-        res = False
+        # Попытка прямого запроса /v1/models при сбое первого
+        try:
+            with httpx.Client(timeout=timeout, trust_env=False) as client:
+                v1_resp = client.get(f"{base_url}/v1/models", headers=headers)
+                res = (v1_resp.status_code == 200)
+        except Exception:
+            res = False
     with _RTX_CACHE_LOCK:
         _RTX_CACHE[cache_key] = (now, res)
     return res
@@ -1067,7 +1100,7 @@ def get_rtx4070_health(
     force: bool = False,
     cache_ttl: float = 2.0
 ) -> Dict[str, Any]:
-    """Получает детальное состояние сервера RTX 4070, загруженную модель и статус VRAM с потокобезопасным TTL-кэшированием."""
+    """Получает детальное состояние сервера RTX 4070 с поддержкой как pc_server (/health), так и LM Studio (/v1/models)."""
     cache_key = f"health_{endpoint}_{port}"
     now = time.time()
     if force:
@@ -1089,8 +1122,42 @@ def get_rtx4070_health(
             resp = client.get(f"{base_url}/health", headers=headers)
             if resp.status_code == 200:
                 health = resp.json()
+            elif resp.status_code == 404 or resp.status_code >= 400:
+                # Fallback для LM Studio
+                v1_resp = client.get(f"{base_url}/v1/models", headers=headers)
+                if v1_resp.status_code == 200:
+                    data = v1_resp.json()
+                    models_list = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
+                    llm_models = [m for m in models_list if not ("embed" in m.lower() or "nomic" in m.lower())]
+                    embed_models = [m for m in models_list if ("embed" in m.lower() or "nomic" in m.lower())]
+                    active_llm = llm_models[0] if llm_models else (models_list[0] if models_list else "qwen2.5-14b-instruct-1m")
+                    health = {
+                        "status": "online",
+                        "loaded_llm": active_llm,
+                        "embedding_active": bool(embed_models) or True,
+                        "ctx_size": 8192,
+                        "server_type": "lm_studio"
+                    }
     except Exception as e:
-        logger.debug(f"get_rtx4070_health error: {e}")
+        # Попытка опроса LM Studio при сетевой ошибке /health
+        try:
+            with httpx.Client(timeout=timeout, trust_env=False) as client:
+                v1_resp = client.get(f"{base_url}/v1/models", headers=headers)
+                if v1_resp.status_code == 200:
+                    data = v1_resp.json()
+                    models_list = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
+                    llm_models = [m for m in models_list if not ("embed" in m.lower() or "nomic" in m.lower())]
+                    embed_models = [m for m in models_list if ("embed" in m.lower() or "nomic" in m.lower())]
+                    active_llm = llm_models[0] if llm_models else (models_list[0] if models_list else "qwen2.5-14b-instruct-1m")
+                    health = {
+                        "status": "online",
+                        "loaded_llm": active_llm,
+                        "embedding_active": bool(embed_models) or True,
+                        "ctx_size": 8192,
+                        "server_type": "lm_studio"
+                    }
+        except Exception:
+            logger.debug(f"get_rtx4070_health error: {e}")
     with _RTX_CACHE_LOCK:
         _RTX_CACHE[cache_key] = (now, health)
     return health
@@ -1104,7 +1171,7 @@ def get_rtx4070_models(
     force: bool = False,
     cache_ttl: float = 5.0
 ) -> List[str]:
-    """Возвращает список доступных на сервере GGUF моделей с диска с потокобезопасным TTL-кэшированием."""
+    """Возвращает список доступных на сервере GGUF моделей с поддержкой как pc_server (/admin/models), так и LM Studio (/v1/models)."""
     cache_key = f"models_{endpoint}_{port}"
     now = time.time()
     if force:
@@ -1127,8 +1194,21 @@ def get_rtx4070_models(
             if resp.status_code == 200:
                 data = resp.json()
                 models = data.get("available_gguf", [])
+            else:
+                # Fallback для LM Studio
+                v1_resp = client.get(f"{base_url}/v1/models", headers=headers)
+                if v1_resp.status_code == 200:
+                    data = v1_resp.json()
+                    models = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
     except Exception as e:
-        logger.debug(f"get_rtx4070_models error: {e}")
+        try:
+            with httpx.Client(timeout=timeout, trust_env=False) as client:
+                v1_resp = client.get(f"{base_url}/v1/models", headers=headers)
+                if v1_resp.status_code == 200:
+                    data = v1_resp.json()
+                    models = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+        except Exception:
+            logger.debug(f"get_rtx4070_models error: {e}")
 
     with _RTX_CACHE_LOCK:
         _RTX_CACHE[cache_key] = (now, models)
