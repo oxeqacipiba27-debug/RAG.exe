@@ -417,7 +417,25 @@ def get_loaded_models(base_url: str = DEFAULT_BASE_URL, timeout: float = 2.0) ->
                         mid = m.get("id")
                         if mid:
                             loaded_ids.append(mid)
-                return loaded_ids
+                if loaded_ids:
+                    return loaded_ids
+    except Exception:
+        pass
+
+    # Fallback на /v1/models для LM Studio
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            v1_url = f"{norm_url}/models" if norm_url.endswith("/v1") else f"{norm_url}/v1/models"
+            resp = client.get(v1_url)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                loaded_ids = []
+                for m in data:
+                    mid = m.get("id") if isinstance(m, dict) else str(m)
+                    if mid:
+                        loaded_ids.append(mid)
+                if loaded_ids:
+                    return loaded_ids
     except Exception:
         pass
 

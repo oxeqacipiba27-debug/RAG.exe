@@ -689,7 +689,7 @@ with st.sidebar:
 
     backend_options = [
         "⚡ Удаленный RTX 4070 (ПК / Любая сеть)",
-        "🟣 LM Studio (локально)",
+        "🟣 LM Studio (локально или ПК)",
         "🦙 Ollama (нативно)",
         "🐳 Docker (контейнер)",
         "🌐 Произвольный URL / API"
@@ -722,25 +722,29 @@ with st.sidebar:
 
         # 1. Выбор пресета подключения
         preset_options = [
+            "🏠 LM Studio на ПК (192.168.1.11:1234)",
             "🌐 Tailscale (P2P WireGuard — из любой сети)",
-            "🏠 Локальная сеть (LAN)",
+            "🏠 Локальная сеть (LAN :8000)",
             "☁️ Туннель Cloudflare HTTPS",
             "🧪 Локальный тестовый сервер (127.0.0.1:8000)",
             "✏️ Пользовательский адрес"
         ]
 
-        cur_ip = rem_cfg.get("ip", "127.0.0.1")
+        cur_ip = rem_cfg.get("ip", "192.168.1.11")
+        cur_port_num = int(rem_cfg.get("port", "1234"))
         preset_idx = 0
-        if cur_ip.startswith("100."):
+        if cur_ip == "192.168.1.11" and cur_port_num == 1234:
             preset_idx = 0
-        elif cur_ip.startswith("192.168.") or cur_ip.startswith("10."):
+        elif cur_ip.startswith("100."):
             preset_idx = 1
-        elif "trycloudflare" in cur_ip or cur_ip.startswith("https://"):
+        elif cur_ip.startswith("192.168.") or cur_ip.startswith("10."):
             preset_idx = 2
-        elif cur_ip in ("127.0.0.1", "localhost"):
+        elif "trycloudflare" in cur_ip or cur_ip.startswith("https://"):
             preset_idx = 3
-        else:
+        elif cur_ip in ("127.0.0.1", "localhost"):
             preset_idx = 4
+        else:
+            preset_idx = 5
 
         selected_preset = st.selectbox(
             "Тип подключения",
@@ -751,13 +755,16 @@ with st.sidebar:
         )
 
         target_endpoint = cur_ip
-        target_port = int(rem_cfg.get("port", "8000"))
+        target_port = cur_port_num
 
-        if "Tailscale" in selected_preset and not cur_ip.startswith("100."):
+        if "LM Studio на ПК" in selected_preset:
+            target_endpoint = "192.168.1.11"
+            target_port = 1234
+        elif "Tailscale" in selected_preset and not cur_ip.startswith("100."):
             target_endpoint = rem_cfg.get("ip") if rem_cfg.get("ip", "").startswith("100.") else "100.84.120.45"
             target_port = 8000
         elif "Локальная сеть" in selected_preset and not (cur_ip.startswith("192.168.") or cur_ip.startswith("10.")):
-            target_endpoint = rem_cfg.get("real_ip", "192.168.1.100")
+            target_endpoint = rem_cfg.get("real_ip", "192.168.1.11")
             target_port = 8000
         elif "Cloudflare" in selected_preset and not ("trycloudflare" in cur_ip or cur_ip.startswith("https://")):
             target_endpoint = "https://your-tunnel.trycloudflare.com"
@@ -926,8 +933,21 @@ with st.sidebar:
             else:
                 st.error(msg)
 
-    elif selected_backend == "🟣 LM Studio (локально)":
-        lm_studio_url = "http://127.0.0.1:1234/v1"
+    elif selected_backend.startswith("🟣 LM Studio"):
+        rem_cfg_lms = server_manager.get_llm_remote_config()
+        default_lms_host = rem_cfg_lms.get("ip", "192.168.1.11") if rem_cfg_lms.get("ip") != "127.0.0.1" else "192.168.1.11"
+        col_lms1, col_lms2 = st.columns([3, 1])
+        with col_lms1:
+            lms_host = st.text_input(
+                "Хост LM Studio",
+                value=default_lms_host,
+                key="lms_host_input",
+                help="192.168.1.11 (ПК с RTX 4070) или 127.0.0.1 (локально на ноутбуке)"
+            )
+        with col_lms2:
+            lms_port = st.number_input("Порт", value=1234, min_value=1, max_value=65535, key="lms_port_input")
+
+        lm_studio_url = f"http://{lms_host.strip()}:{int(lms_port)}/v1"
         embed_model = "text-embedding-nomic-embed-text-v1.5"
 
         is_online, loaded_models = cached_server_status(lm_studio_url)
@@ -935,11 +955,14 @@ with st.sidebar:
         if llm_loaded:
             llm_model = llm_loaded[0]
             llm_ready = True
+        elif loaded_models:
+            llm_model = loaded_models[0]
+            llm_ready = True
         else:
             llm_model = "qwen2.5-14b-instruct-1m"
             llm_ready = False
         emb_ready = any("nomic" in m.lower() or "embed" in m.lower() for m in loaded_models)
-        stack_ready = is_online and llm_ready and emb_ready
+        stack_ready = is_online and (llm_ready or len(loaded_models) > 0)
 
         if stack_ready:
             st.markdown(

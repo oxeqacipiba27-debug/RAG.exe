@@ -107,6 +107,19 @@ cmd_status() {
     health_json=$(curl -s "${CURL_BASE_OPTS[@]}" "${AUTH_HEADER[@]}" --connect-timeout 0.6 --max-time 1.0 "${BASE_URL}/health" 2>/dev/null || true)
 
     if [[ -z "${health_json}" ]] || ! echo "${health_json}" | jq -e . >/dev/null 2>&1; then
+        # Try LM Studio / OpenAI /v1/models fallback
+        local v1_json
+        v1_json=$(curl -s "${CURL_BASE_OPTS[@]}" "${AUTH_HEADER[@]}" --connect-timeout 0.6 --max-time 1.0 "${BASE_URL}/v1/models" 2>/dev/null || true)
+        if [[ -n "${v1_json}" ]] && echo "${v1_json}" | jq -e '.data' >/dev/null 2>&1; then
+            local active_llm
+            active_llm=$(echo "${v1_json}" | jq -r '[.data[].id | select(test("embed|nomic"; "i") | not)][0] // (.data[0].id // "qwen2.5-14b")')
+            local short_name
+            short_name=$(shorten_model_name "${active_llm}")
+            printf '{"text":"󰚩 %s","tooltip":"RTX 4070 (LM Studio)\\nEndpoint: %s\\nModel: %s\\nContext: 8192 tokens\\nEmbeddings: Nomic Embed\\n\\nLeft-Click: Open Menu\\nRight-Click: Free VRAM","class":"online"}\n' \
+                "${short_name}" "${BASE_URL}" "${active_llm}"
+            return 0
+        fi
+
         # Server Offline or Unreachable
         printf '{"text":"󰚩 OFF","tooltip":"RTX 4070 Server is Offline\\nEndpoint: %s\\nStatus: Unreachable (Connection Timeout/Refused)\\n\\nLeft-Click: Open Menu\\nRight-Click: Free VRAM","class":"offline"}\n' "${BASE_URL}"
         return 0
