@@ -1,47 +1,75 @@
 @echo off
 chcp 65001 >nul
-title EXSCIO (Docker Stack)
+title EXSCIO - Запуск через Docker (WSL2)
+
 cd /d "%~dp0"
 
-:: Проверка аргумента отладки (--console / -c)
-if "%~1"=="--console" goto CONSOLE_MODE
-if "%~1"=="-c" goto CONSOLE_MODE
+set "PY_CMD="
+set "PY_EXTRA="
 
-:: Запуск в скрытом режиме без открытия консольных окон
-wscript.exe "%~dp0start_docker.vbs"
-exit
-
-:CONSOLE_MODE
-set "PATH=%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin;C:\Program Files\Docker\Docker\resources\bin;%PATH%"
-
-echo ====================================================================
-echo   Запуск контейнеров Ollama + Open WebUI через Docker Compose...
-echo ====================================================================
-
-where wsl >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    wsl -l -q >nul 2>&1
-    if %ERRORLEVEL% neq 0 (
-        echo [!] Внимание: В системе Windows не установлен компонент WSL2.
-        echo     Docker Desktop требует WSL2 для работы движка контейнеров.
-        echo     Выполните в PowerShell от Администратора: wsl --install
-        echo.
-    )
+if exist "%~dp0venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0venv\Scripts\python.exe"
+    goto :python_found
+)
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+    goto :python_found
 )
 
-docker compose up -d
-
-if %ERRORLEVEL% equ 0 (
-    echo.
-    echo [OK] Контейнеры успешно запущены в фоне!
-    echo     - Ollama API : http://localhost:11434
-    echo     - Open WebUI : http://localhost:3000
-    echo.
-) else (
-    echo.
-    echo [X] Ошибка запуска Docker Compose.
-    echo     Убедитесь, что приложение Docker Desktop запущено.
-    echo.
+where python >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=python"
+    goto :python_found
 )
 
+where py >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=py"
+    set "PY_EXTRA=-3"
+    goto :python_found
+)
+
+echo [X] Ошибка: Python не найден в системе. Установите Python 3.10+ и добавьте его в PATH.
 pause
+exit /b 1
+
+:python_found
+
+echo =========================================================
+echo   EXSCIO: Запуск в Docker-контейнере (WSL2 / Ollama)
+echo =========================================================
+echo.
+
+REM Проверка наличия подсистемы WSL2 (Правило 4 GEMINI.md)
+echo [i] Проверка доступности подсистемы WSL2...
+wsl -l -q >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [!] ПРЕДУПРЕЖДЕНИЕ: Подсистема WSL2 не обнаружена или не настроена.
+    echo [!] Для работы Docker Desktop на Windows требуется WSL2.
+    echo [i] Рекомендация: откройте PowerShell от имени администратора и выполните:
+    echo     wsl --install
+    echo.
+    set /p "PROCEED=Попробовать продолжить запуск Docker вслепую? [y/N]: "
+    if /i not "%PROCEED%"=="y" (
+        echo [X] Запуск Docker отменен пользователем.
+        pause
+        exit /b 1
+    )
+) else (
+    echo [OK] Подсистема WSL2 доступна.
+)
+
+echo.
+echo [i] Переключение профиля на Docker...
+"%PY_CMD%" %PY_EXTRA% switch_backend.py docker
+
+echo.
+echo [i] Запуск Docker Compose...
+docker compose up -d
+if %errorlevel% neq 0 (
+    echo [!] Не удалось запустить Docker Compose. Убедитесь, что Docker Desktop запущен.
+)
+
+echo.
+echo [i] Запуск EXSCIO...
+"%PY_CMD%" %PY_EXTRA% run_app.py %*

@@ -20,6 +20,7 @@ import os
 import sys
 import json
 import time
+import pickle
 import math
 import re
 import hashlib
@@ -189,6 +190,8 @@ class AppConfig:
                 self.llm_base_url = "http://localhost:11434/v1"
             elif self.llm_provider == "DOCKER":
                 self.llm_base_url = "http://host.docker.internal:11434/v1"
+            elif self.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+                self.llm_base_url = "http://127.0.0.1:8000/v1"
             else:
                 self.llm_base_url = "http://localhost:1234/v1"
 
@@ -197,6 +200,8 @@ class AppConfig:
                 self.llm_model = "qwen2.5-14b-instruct-1m"
             elif self.llm_provider in ("OLLAMA_LOCAL", "DOCKER"):
                 self.llm_model = "qwen2.5:14b"
+            elif self.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+                self.llm_model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
             else:
                 self.llm_model = "qwen2.5-14b-instruct-1m"
 
@@ -209,6 +214,9 @@ class AppConfig:
         if self.llm_provider in ("OLLAMA_LOCAL", "DOCKER"):
             if not self.embedding_model or "text-embedding-nomic" in self.embedding_model:
                 self.embedding_model = "nomic-embed-text"
+        elif self.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+            if not self.embedding_model:
+                self.embedding_model = "nomic-embed-text-v1.5"
 
         # Валидация секретов (Fail-Fast в production)
         self.validate_secrets()
@@ -297,6 +305,14 @@ class BackendHealthChecker:
                 "  6. Если скрипт работает на хосте, используйте адрес: http://localhost:11434/v1",
                 "     Если скрипт работает внутри Docker-сети, используйте: http://host.docker.internal:11434/v1 или http://ollama:11434/v1"
             ])
+        elif provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+            lines.extend([
+                "  1. Убедитесь, что серверный ПК (Windows 11) включен или отправьте Wake-on-LAN: 'llm-ctl wake'.",
+                "  2. Если вы подключаетесь не из локальной сети, проверьте статус Tailscale ('tailscale status') или туннеля Cloudflare.",
+                "  3. Проверьте адрес хоста в ~/.config/llm-remote/config.env или .env (например: 100.x.y.z:8000 или https://tunnel.trycloudflare.com).",
+                "  4. Для тестирования без включения ПК запустите локальный Mock-сервер: 'llm-ctl start-mock' или через кнопку в GUI.",
+                "  5. Убедитесь, что модель загружена в память GPU (статус '󰚩 IDLE' означает, что VRAM свободна, переключите модель через 'llm-ctl switch <model.gguf>')."
+            ])
         else:
             lines.extend([
                 f"  1. Проверьте доступность хоста {url}.",
@@ -309,10 +325,28 @@ class BackendHealthChecker:
     @classmethod
     def check_llm(cls, client: OpenAI, config: AppConfig) -> Tuple[bool, str]:
         """Проверка доступности LLM через OpenAI-совместимый API."""
+        if config.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+            try:
+                import server_manager
+                base = server_manager.normalize_rtx4070_url(config.llm_base_url)
+                if not server_manager.is_rtx4070_online(base, timeout=0.6, api_key=config.llm_api_key):
+                    msg = cls.get_remediation_message(config, "LLM", "Удаленный хост RTX 4070 недоступен (ПК выключен или не в сети)")
+                    return False, msg
+            except Exception:
+                pass
+
         try:
             client.models.list(timeout=4.0)
             return True, "OK"
         except Exception as e:
+            if config.llm_provider in ("RTX4070_REMOTE", "REMOTE_PC"):
+                try:
+                    import server_manager
+                    base = server_manager.normalize_rtx4070_url(config.llm_base_url)
+                    if server_manager.is_rtx4070_online(base, timeout=1.0, api_key=config.llm_api_key):
+                        return True, "OK"
+                except Exception:
+                    pass
             msg = cls.get_remediation_message(config, "LLM", str(e))
             return False, msg
 
@@ -841,8 +875,22 @@ class DenseVectorStore:
         self.device_preference = (device or cfg.embedding_device or "cpu").lower()
 
         # Сетевые клиенты для REMOTE режима
-        self.client = httpx.Client(base_url=self.base_url, timeout=45.0, trust_env=False)
-        self.openai_client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        emb_api_k = self.api_key or "not-needed"
+        headers = {}
+        if emb_api_k and emb_api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {emb_api_k}"
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout=httpx.Timeout(connect=2.0, read=25.0, write=5.0, pool=5.0),
+            trust_env=False
+        )
+        self.openai_client = OpenAI(
+            base_url=self.base_url,
+            api_key=emb_api_k,
+            max_retries=1,
+            timeout=httpx.Timeout(connect=2.0, read=25.0, write=5.0, pool=5.0)
+        )
 
         # Локальная модель SentenceTransformer (инициализируется при первом требовании)
         self.st_model = None
@@ -910,13 +958,13 @@ class DenseVectorStore:
             return vec
 
         # 2. Удаленный режим (OpenAI API / LM Studio / Ollama)
-        delay = 1.0
+        delay = 0.5
         for attempt in range(max_retries):
             try:
                 res = self.openai_client.embeddings.create(
                     model=self.model_name,
                     input=formatted_input,
-                    timeout=30.0
+                    timeout=20.0
                 )
                 if res.data and len(res.data) > 0:
                     arr = np.array(res.data[0].embedding, dtype=np.float32)
@@ -932,13 +980,14 @@ class DenseVectorStore:
                     return vec
             except EmbeddingDimensionMismatchError:
                 raise
-            except Exception:
+            except Exception as e:
+                is_conn_error = isinstance(e, (openai.APIConnectionError, httpx.ConnectError, httpx.ConnectTimeout, ConnectionRefusedError))
                 # Fallback прямой httpx запрос
                 try:
                     resp = self.client.post(
                         "/embeddings",
                         json={"model": self.model_name, "input": formatted_input},
-                        timeout=30.0
+                        timeout=3.0 if is_conn_error else 15.0
                     )
                     if resp.status_code == 200:
                         data = resp.json()["data"][0]["embedding"]
@@ -957,8 +1006,11 @@ class DenseVectorStore:
                     raise
                 except Exception:
                     pass
+                if is_conn_error:
+                    # Сервер оффлайн — прерываем цикл повторов и позволяем BM25 сработать мгновенно
+                    break
                 time.sleep(delay)
-                delay *= 2.0
+                delay *= 1.5
         return None
 
     def get_batch_embeddings(self, texts: List[str], is_query: bool = False, batch_size: int = 16) -> List[Optional[List[float]]]:
@@ -1641,6 +1693,10 @@ class RAGPipeline:
                     self.config.embedding_model = "nomic-embed-text"
             elif "1234" in base_url:
                 self.config.llm_provider = "LM_STUDIO"
+            elif "8000" in base_url or os.getenv("LLM_PROVIDER") in ("RTX4070_REMOTE", "REMOTE_PC"):
+                self.config.llm_provider = "RTX4070_REMOTE"
+                if not embed_model or "text-embedding-nomic" in self.config.embedding_model:
+                    self.config.embedding_model = "nomic-embed-text-v1.5"
 
         self.index_file = self.config.index_file
         self.llm_model = self.config.llm_model
@@ -1648,9 +1704,14 @@ class RAGPipeline:
         self.base_url = self.config.llm_base_url
 
         # Унифицированный клиент OpenAI
-        self.openai_client = OpenAI(base_url=self.config.llm_base_url, api_key=self.config.llm_api_key)
+        api_k = self.config.llm_api_key or "not-needed"
+        self.openai_client = OpenAI(base_url=self.config.llm_base_url, api_key=api_k)
+
         # HTTPX клиент для прямой совместимости (включая стриминг в GUI)
-        self.client = httpx.Client(base_url=self.config.llm_base_url, timeout=90.0, trust_env=False)
+        headers = {}
+        if api_k and api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {api_k}"
+        self.client = httpx.Client(base_url=self.config.llm_base_url, headers=headers, timeout=90.0, trust_env=False)
 
         self.chunks: List[DocumentChunk] = []
         self.dense_store = DenseVectorStore(
@@ -1671,6 +1732,44 @@ class RAGPipeline:
 
         self.load_index()
 
+    def set_inference_target(
+        self,
+        llm_model: Optional[str] = None,
+        embed_model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None
+    ) -> None:
+        """
+        Мгновенно переключает целевой сервер и модели инференса без перезагрузки индекса (0 мс).
+        """
+        if llm_model:
+            self.llm_model = llm_model
+            self.config.llm_model = llm_model
+        if embed_model:
+            self.embed_model = embed_model
+            self.config.embedding_model = embed_model
+            if hasattr(self, "dense_store") and self.dense_store:
+                self.dense_store.model_name = embed_model
+        if base_url:
+            self.base_url = base_url
+            self.config.llm_base_url = base_url
+            self.config.embedding_base_url = base_url
+            if hasattr(self, "dense_store") and self.dense_store:
+                self.dense_store.base_url = base_url
+        if api_key is not None:
+            self.config.llm_api_key = api_key
+            self.config.embedding_api_key = api_key
+            if hasattr(self, "dense_store") and self.dense_store:
+                self.dense_store.api_key = api_key
+
+        api_k = self.config.llm_api_key or "not-needed"
+        headers = {}
+        if api_k and api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {api_k}"
+
+        self.openai_client = OpenAI(base_url=self.config.llm_base_url, api_key=api_k)
+        self.client = httpx.Client(base_url=self.config.llm_base_url, headers=headers, timeout=90.0, trust_env=False)
+
     def check_health(self) -> Tuple[bool, str]:
         """
         Pre-flight проверка доступности бэкендов LLM и Embeddings.
@@ -1687,17 +1786,62 @@ class RAGPipeline:
         return True, "Все бэкенды RAG (LLM + Embeddings) доступны и функционируют штатно."
 
     def load_index(self) -> bool:
-        if not Path(self.index_file).exists():
+        idx_path = Path(self.index_file)
+        if not idx_path.exists() and not idx_path.is_absolute():
+            candidates = [
+                Path(__file__).resolve().parent / idx_path.name,
+                Path.home() / "Desktop" / "schoolX" / idx_path.name,
+            ]
+            for cand in candidates:
+                if cand.exists():
+                    logger.info(f"Найден индекс документов по пути: {cand}")
+                    idx_path = cand
+                    break
+
+        if not idx_path.exists():
             logger.warning(f"Файл индекса {self.index_file} не найден.")
             return False
 
-        logger.info(f"Загрузка индекса из {self.index_file}...")
+        target_stat = idx_path.stat()
+        cache_path = idx_path.with_name(f"{idx_path.stem}.cache.pkl")
+
+        # 1. Сверхбыстрая загрузка из бинарного кэша при совпадении mtime и размера файла (~2с вместо 18с)
+        if cache_path.exists():
+            try:
+                c_stat = cache_path.stat()
+                if c_stat.st_mtime >= target_stat.st_mtime:
+                    t0 = time.time()
+                    with open(cache_path, "rb") as f:
+                        cache_data = pickle.load(f)
+                    if (
+                        isinstance(cache_data, dict)
+                        and cache_data.get("version") == 1
+                        and cache_data.get("source_size") == target_stat.st_size
+                        and "chunks" in cache_data
+                        and "bm25" in cache_data
+                        and "matrix" in cache_data
+                    ):
+                        self.chunks = cache_data["chunks"]
+                        self.bm25 = cache_data["bm25"]
+                        self.dense_store.matrix = cache_data["matrix"]
+                        if self.dense_store.matrix is not None:
+                            self.dense_store.embedding_dim = self.dense_store.matrix.shape[1]
+                        self.retriever = HybridRetriever(self.dense_store, self.bm25, self.chunks)
+                        logger.info(
+                            f"Индекс мгновенно загружен из бинарного кэша {cache_path.name} за {time.time()-t0:.2f}s! "
+                            f"Загружено чанков: {len(self.chunks)}"
+                        )
+                        return True
+            except Exception as e:
+                logger.warning(f"Сбой чтения бинарного кэша {cache_path.name}: {e}. Выполняется разбор исходного JSON.")
+
+        logger.info(f"Загрузка индекса из исходного JSON {idx_path}...")
         t0 = time.time()
         try:
-            with open(self.index_file, "r", encoding="utf-8") as f:
+            with open(idx_path, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
         except Exception as e:
-            logger.error(f"Ошибка чтения {self.index_file}: {e}")
+            logger.error(f"Ошибка чтения {idx_path}: {e}")
             return False
 
         self.chunks = []
@@ -1740,6 +1884,25 @@ class RAGPipeline:
         self.dense_store.build_matrix(self.chunks)
         self.retriever = HybridRetriever(self.dense_store, self.bm25, self.chunks)
         logger.info(f"Индекс успешно загружен за {time.time()-t0:.2f}s! Загружено чанков: {len(self.chunks)}")
+
+        # Сохранение бинарного кэша для сверхбыстрой последующей загрузки
+        try:
+            cache_payload = {
+                "version": 1,
+                "source_mtime": target_stat.st_mtime,
+                "source_size": target_stat.st_size,
+                "chunks": self.chunks,
+                "bm25": self.bm25,
+                "matrix": self.dense_store.matrix,
+            }
+            tmp_cache = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
+            with open(tmp_cache, "wb") as f:
+                pickle.dump(cache_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_cache, cache_path)
+            logger.info(f"Бинарный кэш индекса успешно сохранен: {cache_path.name}")
+        except Exception as e:
+            logger.warning(f"Не удалось записать бинарный кэш {cache_path}: {e}")
+
         return True
 
     def save_index(self, max_backups: int = 3):
@@ -1748,7 +1911,8 @@ class RAGPipeline:
         1. Запись во временный файл в той же директории (index.tmp.PID_TIMESTAMP) с flush() и os.fsync().
         2. Ротация последних N резервных копий (.bak.1, .bak.2, ...).
         3. Атомарное замещение целевого файла через os.replace().
-        4. Гарантированная очистка временного файла при любой ошибке.
+        4. Атомарная синхронизация бинарного кэша (*.cache.pkl).
+        5. Гарантированная очистка временного файла при любой ошибке.
         """
         target_path = Path(self.index_file).resolve()
         temp_path = target_path.with_name(f"{target_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
@@ -1781,6 +1945,26 @@ class RAGPipeline:
             # 3. Атомарная замена
             os.replace(temp_path, target_path)
             logger.info(f"Индекс успешно атомарно сохранен: {target_path} ({len(self.chunks)} чанков).")
+
+            # 4. Атомарное обновление бинарного кэша
+            try:
+                cache_path = target_path.with_name(f"{target_path.stem}.cache.pkl")
+                cur_stat = target_path.stat()
+                cache_payload = {
+                    "version": 1,
+                    "source_mtime": cur_stat.st_mtime,
+                    "source_size": cur_stat.st_size,
+                    "chunks": self.chunks,
+                    "bm25": self.bm25,
+                    "matrix": self.dense_store.matrix,
+                }
+                tmp_cache = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
+                with open(tmp_cache, "wb") as f:
+                    pickle.dump(cache_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(tmp_cache, cache_path)
+                logger.info(f"Бинарный кэш индекса успешно обновлен: {cache_path.name}")
+            except Exception as e:
+                logger.warning(f"Не удалось обновить бинарный кэш {cache_path}: {e}")
 
         except Exception as e:
             logger.critical(f"Ошибка сохранения индекса: {e}. Удаление временного файла.")
@@ -1991,7 +2175,7 @@ if __name__ == "__main__":
     rag = RAGPipeline()
     is_healthy, status_report = rag.check_health()
     if is_healthy:
-        print(f"  [OK] {status_report}")
+        print(f"  [✓] {status_report}")
     else:
         print(f"\n{status_report}\n")
 

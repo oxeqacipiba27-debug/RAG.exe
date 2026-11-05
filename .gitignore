@@ -24,6 +24,9 @@ __pycache__/
 # RAG Large Storage & Vector Index (generated locally)
 rag_index.json
 *.json.bak
+*.cache.pkl
+aimodels/
+*.gguf
 
 # Knowledge Base Raw Data & Scraped Files
 data/*
@@ -42,3 +45,4 @@ logs/
 .DS_Store
 Thumbs.db
 *.lnk
+.agents/

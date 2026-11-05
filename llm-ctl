@@ -1,0 +1,463 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# llm-ctl: Remote RTX 4070 LLM & RAG Control Plane for SwayFX / Waybar
+# ==============================================================================
+
+set -euo pipefail
+
+CONFIG_FILE="${HOME}/.config/llm-remote/config.env"
+
+# Default configuration fallback
+LLM_SERVER_IP="127.0.0.1"
+LLM_SERVER_PORT="8000"
+LLM_SERVER_MAC="00:11:22:33:44:55"
+REAL_SERVER_IP="192.168.1.100"
+LLM_DEFAULT_CTX="16384"
+LAUNCHER_CMD="rofi -dmenu -i -p 'RTX 4070'"
+
+# Source configuration file if present
+if [[ -f "${CONFIG_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${CONFIG_FILE}"
+elif [[ -f "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.env" ]]; then
+    # shellcheck disable=SC1090
+    source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.env"
+elif [[ -f "/home/alex/rag exe/.env" ]]; then
+    # shellcheck disable=SC1090
+    source "/home/alex/rag exe/.env"
+fi
+
+if [[ "${LLM_SERVER_IP:-}" =~ ^https?:// ]]; then
+    BASE_URL="${LLM_SERVER_IP}"
+else
+    BASE_URL="http://${LLM_SERVER_IP:-127.0.0.1}:${LLM_SERVER_PORT:-8000}"
+fi
+BASE_URL="${BASE_URL%/}"
+BASE_URL="${BASE_URL%/v1}"
+
+AUTH_HEADER=()
+if [[ -n "${LLM_API_KEY:-}" ]]; then
+    AUTH_HEADER=(-H "Authorization: Bearer ${LLM_API_KEY}")
+fi
+
+CURL_BASE_OPTS=(--noproxy "*")
+
+MOCK_SERVER_SCRIPT="${HOME}/.local/share/llm-remote/mock_pc_server.py"
+if [[ ! -f "${MOCK_SERVER_SCRIPT}" ]]; then
+    for cand in \
+        "/home/alex/rag exe/mock_pc_server.py" \
+        "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/mock_pc_server.py"; do
+        if [[ -f "${cand}" ]]; then
+            MOCK_SERVER_SCRIPT="${cand}"
+            break
+        fi
+    done
+fi
+
+# --- Helper Functions ---
+
+notify() {
+    local title="$1"
+    local message="$2"
+    local urgency="${3:-normal}"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a "LLM Remote" -u "${urgency}" "${title}" "${message}"
+    fi
+}
+
+refresh_waybar() {
+    # Send SIGRTMIN+9 to Waybar for instant widget refresh
+    pkill -RTMIN+9 waybar 2>/dev/null || true
+}
+
+get_active_launcher() {
+    if [[ -n "${LAUNCHER_CMD:-}" ]]; then
+        echo "${LAUNCHER_CMD}"
+    elif command -v rofi >/dev/null 2>&1; then
+        echo "rofi -dmenu -i -p 'RTX 4070'"
+    elif command -v fuzzel >/dev/null 2>&1; then
+        echo "fuzzel --dmenu -p 'RTX 4070 > '"
+    elif command -v wofi >/dev/null 2>&1; then
+        echo "wofi --dmenu -p 'RTX 4070'"
+    else
+        echo "rofi -dmenu -i -p 'RTX 4070'"
+    fi
+}
+
+shorten_model_name() {
+    local name="$1"
+    # Strip extension
+    local clean="${name%.gguf}"
+    clean="${clean%.bin}"
+    # Remove common verbose suffixes for compact Waybar display
+    clean="$(echo "${clean}" | sed -E 's/-(Instruct|Chat|GGUF|v[0-9.]+|Q[0-9]_[A-Z0-9_]+)//g')"
+    # Truncate if still long
+    if [[ ${#clean} -gt 15 ]]; then
+        echo "${clean:0:15}…"
+    else
+        echo "${clean}"
+    fi
+}
+
+# --- Subcommands ---
+
+cmd_status() {
+    # Strict sub-second timeout to prevent SwayFX / Waybar freezing
+    local health_json
+    health_json=$(curl -s "${CURL_BASE_OPTS[@]}" "${AUTH_HEADER[@]}" --connect-timeout 0.6 --max-time 1.0 "${BASE_URL}/health" 2>/dev/null || true)
+
+    if [[ -z "${health_json}" ]] || ! echo "${health_json}" | jq -e . >/dev/null 2>&1; then
+        # Server Offline or Unreachable
+        printf '{"text":"󰚩 OFF","tooltip":"RTX 4070 Server is Offline\\nEndpoint: %s\\nStatus: Unreachable (Connection Timeout/Refused)\\n\\nLeft-Click: Open Menu\\nRight-Click: Free VRAM","class":"offline"}\n' "${BASE_URL}"
+        return 0
+    fi
+
+    local status loaded_llm embedding_active ctx_size
+    status=$(echo "${health_json}" | jq -r '.status // "unknown"')
+    loaded_llm=$(echo "${health_json}" | jq -r '.loaded_llm // empty')
+    embedding_active=$(echo "${health_json}" | jq -r '.embedding_active // false')
+    ctx_size=$(echo "${health_json}" | jq -r '.ctx_size // 16384')
+
+    if [[ -z "${loaded_llm}" || "${loaded_llm}" == "null" ]]; then
+        # Server Online, but VRAM is unloaded
+        printf '{"text":"󰚩 IDLE","tooltip":"RTX 4070 Online (VRAM Free)\\nEndpoint: %s\\nActive LLM: None (VRAM Unloaded)\\nEmbeddings: %s\\n\\nLeft-Click: Select Model to Load\\nRight-Click: Free VRAM","class":"idle"}\n' \
+            "${BASE_URL}" "${embedding_active}"
+    else
+        # Server Online, Model Loaded in VRAM
+        local short_name
+        short_name=$(shorten_model_name "${loaded_llm}")
+        printf '{"text":"󰚩 %s","tooltip":"RTX 4070 Online\\nEndpoint: %s\\nModel: %s\\nContext: %s tokens\\nEmbeddings: %s\\n\\nLeft-Click: Switch Model / Menu\\nRight-Click: Free VRAM","class":"online"}\n' \
+            "${short_name}" "${BASE_URL}" "${loaded_llm}" "${ctx_size}" "${embedding_active}"
+    fi
+}
+
+cmd_wake() {
+    notify "RTX 4070" "Sending Wake-on-LAN packet to ${LLM_SERVER_MAC}..." "normal"
+    local sent=0
+
+    if command -v wol >/dev/null 2>&1; then
+        wol "${LLM_SERVER_MAC}" >/dev/null 2>&1 && sent=1 || true
+    fi
+
+    if [[ ${sent} -eq 0 ]] && command -v wakeonlan >/dev/null 2>&1; then
+        wakeonlan "${LLM_SERVER_MAC}" >/dev/null 2>&1 && sent=1 || true
+    fi
+
+    if [[ ${sent} -eq 0 ]] && command -v etherwake >/dev/null 2>&1; then
+        sudo etherwake "${LLM_SERVER_MAC}" >/dev/null 2>&1 && sent=1 || true
+    fi
+
+    # Pure Python UDP broadcast fallback with subnet-directed broadcast
+    if [[ ${sent} -eq 0 ]]; then
+        python3 -c "
+import socket, sys, os
+mac = sys.argv[1].replace(':', '').replace('-', '')
+if len(mac) == 12:
+    packet = b'\xff' * 6 + bytes.fromhex(mac) * 16
+    targets = ['<broadcast>', '255.255.255.255']
+    for val in (sys.argv[2], sys.argv[3]):
+        val = val.strip()
+        if val.startswith('192.168.') and val.count('.') == 3:
+            bcast = '.'.join(val.split('.')[:3]) + '.255'
+            if bcast not in targets:
+                targets.append(bcast)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for target in targets:
+            for port in (9, 7):
+                try:
+                    s.sendto(packet, (target, port))
+                except Exception:
+                    pass
+" "${LLM_SERVER_MAC}" "${LLM_SERVER_IP:-}" "${REAL_SERVER_IP:-}" >/dev/null 2>&1 && sent=1 || true
+    fi
+
+    if [[ ${sent} -eq 1 ]]; then
+        notify "RTX 4070" "Wake-on-LAN magic packet broadcasted. Server booting up." "normal"
+    else
+        notify "RTX 4070" "Failed to send Wake-on-LAN packet. Check MAC address." "critical"
+    fi
+    refresh_waybar
+}
+
+cmd_unload() {
+    notify "RTX 4070" "Freeing GPU VRAM..." "normal"
+    local res
+    res=$(curl -s -X POST "${CURL_BASE_OPTS[@]}" "${AUTH_HEADER[@]}" --connect-timeout 1.0 --max-time 3.0 "${BASE_URL}/admin/unload" 2>/dev/null || true)
+
+    if [[ -n "${res}" ]] && echo "${res}" | jq -e '.status' >/dev/null 2>&1; then
+        notify "RTX 4070" "VRAM freed! GPU is now IDLE." "normal"
+    else
+        notify "RTX 4070" "Unload command completed." "normal"
+    fi
+    refresh_waybar
+}
+
+cmd_switch() {
+    local target_model="$1"
+    local ctx="${2:-${LLM_DEFAULT_CTX:-16384}}"
+
+    notify "RTX 4070" "Loading ${target_model} (ctx: ${ctx}) into VRAM..." "normal"
+
+    local payload
+    payload=$(jq -n --arg m "${target_model}" --argjson c "${ctx}" '{"model": $m, "ctx_size": $c}')
+
+    local res
+    res=$(curl -s "${CURL_BASE_OPTS[@]}" -X POST -H "Content-Type: application/json" "${AUTH_HEADER[@]}" \
+        --connect-timeout 2.0 --max-time 30.0 \
+        -d "${payload}" \
+        "${BASE_URL}/admin/switch" 2>/dev/null || true)
+
+    if [[ -n "${res}" ]] && echo "${res}" | jq -e '.status == "ready"' >/dev/null 2>&1; then
+        notify "RTX 4070" "Model ready: ${target_model}" "normal"
+    else
+        notify "RTX 4070" "Failed to switch model. Check server status." "critical"
+    fi
+    refresh_waybar
+}
+
+cmd_start_mock() {
+    if curl -s "${CURL_BASE_OPTS[@]}" --connect-timeout 0.2 --max-time 0.4 "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+        notify "Local Mock Server" "Mock server is already running on 127.0.0.1:8000" "normal"
+        return 0
+    fi
+
+    notify "Local Mock Server" "Starting RTX 4070 Mock Server on 127.0.0.1:8000..." "normal"
+
+    if command -v systemd-run >/dev/null 2>&1 && systemctl --user list-units >/dev/null 2>&1; then
+        systemctl --user stop llm-mock-server 2>/dev/null || true
+        systemd-run --user --unit=llm-mock-server --description="RTX 4070 Mock Inference Server" \
+            python3 "${MOCK_SERVER_SCRIPT}" >/dev/null 2>&1 || \
+            nohup python3 "${MOCK_SERVER_SCRIPT}" </dev/null >/tmp/mock_pc_server.log 2>&1 & disown
+    else
+        nohup python3 "${MOCK_SERVER_SCRIPT}" </dev/null >/tmp/mock_pc_server.log 2>&1 & disown
+    fi
+
+    local started=0
+    for _ in {1..15}; do
+        if curl -s "${CURL_BASE_OPTS[@]}" --connect-timeout 0.3 --max-time 0.5 "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+            started=1
+            break
+        fi
+        sleep 0.15
+    done
+    refresh_waybar
+    if [[ ${started} -eq 1 ]]; then
+        notify "Local Mock Server" "RTX 4070 Mock Server is ONLINE (127.0.0.1:8000)!" "normal"
+    else
+        notify "Local Mock Server" "Mock Server startup in progress... Check /tmp/mock_pc_server.log" "normal"
+    fi
+}
+
+cmd_stop_mock() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user stop llm-mock-server 2>/dev/null || true
+    fi
+    pkill -f "mock_pc_server.py" 2>/dev/null || true
+    notify "Local Mock Server" "Local mock server stopped." "normal"
+    refresh_waybar
+}
+
+cmd_toggle_ip() {
+    local current_ip="${LLM_SERVER_IP}"
+    local new_ip=""
+
+    if [[ "${current_ip}" == *"127.0.0.1"* ]]; then
+        new_ip="${REAL_SERVER_IP:-192.168.1.100}"
+    else
+        new_ip="127.0.0.1"
+    fi
+
+    # Update config.env
+    if [[ -f "${CONFIG_FILE}" ]]; then
+        sed -i "s|^LLM_SERVER_IP=.*|LLM_SERVER_IP=\"${new_ip}\"|" "${CONFIG_FILE}"
+    else
+        mkdir -p "$(dirname "${CONFIG_FILE}")"
+        echo "LLM_SERVER_IP=\"${new_ip}\"" > "${CONFIG_FILE}"
+    fi
+
+    # Sync with RAG repo .env if present
+    for app_env in "/home/alex/rag exe/.env" "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.env"; do
+        if [[ -f "${app_env}" ]]; then
+            local new_base="http://${new_ip}:8000/v1"
+            sed -i "s|^LLM_BASE_URL=.*|LLM_BASE_URL=${new_base}|" "${app_env}"
+            sed -i "s|^EMBEDDING_BASE_URL=.*|EMBEDDING_BASE_URL=${new_base}|" "${app_env}"
+            break
+        fi
+    done
+
+    notify "LLM Remote" "Target IP switched from ${current_ip} to ${new_ip}" "normal"
+    refresh_waybar
+}
+
+cmd_menu() {
+    local launcher
+    launcher=$(get_active_launcher)
+
+    # 1. Check server health with strict timeout
+    local health_json
+    health_json=$(curl -s "${CURL_BASE_OPTS[@]}" "${AUTH_HEADER[@]}" --connect-timeout 0.6 --max-time 1.0 "${BASE_URL}/health" 2>/dev/null || true)
+
+    if [[ -z "${health_json}" ]] || ! echo "${health_json}" | jq -e . >/dev/null 2>&1; then
+        # --- OFFLINE MENU ---
+        local choice
+        local options=(
+            "⚡ Send Wake-on-LAN Packet (${LLM_SERVER_MAC})"
+            "🧪 Start Local Mock Server (127.0.0.1:8000)"
+            "🌐 Switch IP (Current: ${LLM_SERVER_IP} ➔ Toggle)"
+            "❌ Cancel"
+        )
+
+        choice=$(printf '%s\n' "${options[@]}" | eval "${launcher}" || true)
+
+        case "${choice}" in
+            *"Send Wake-on-LAN"*)
+                cmd_wake
+                ;;
+            *"Start Local Mock Server"*)
+                cmd_start_mock
+                ;;
+            *"Switch IP"*)
+                cmd_toggle_ip
+                ;;
+            *)
+                exit 0
+                ;;
+        esac
+        return 0
+    fi
+
+    # --- ONLINE MENU ---
+    local models_json
+    models_json=$(curl -s "${CURL_BASE_OPTS[@]}" "${AUTH_HEADER[@]}" --connect-timeout 1.0 --max-time 2.0 "${BASE_URL}/admin/models" 2>/dev/null || true)
+
+    local active_model
+    active_model=$(echo "${models_json}" | jq -r '.active_llm // "None (VRAM Free)"')
+
+    local menu_items=()
+    menu_items+=("⭐ Active Model: ${active_model}")
+    menu_items+=("🧹 Unload LLM (Free 4070 VRAM)")
+    menu_items+=("🔄 Change Context Size (8k / 16k / 32k)")
+    menu_items+=("────────────────────────────────")
+
+    # Add available models
+    while IFS= read -r m; do
+        if [[ -n "${m}" ]]; then
+            if [[ "${m}" == "${active_model}" ]]; then
+                menu_items+=("✔ ${m} (Loaded)")
+            else
+                menu_items+=("📦 ${m}")
+            fi
+        fi
+    done < <(echo "${models_json}" | jq -r '.available_gguf[]?' 2>/dev/null || true)
+
+    menu_items+=("────────────────────────────────")
+    if pgrep -f "mock_pc_server.py" >/dev/null 2>&1; then
+        menu_items+=("🛑 Stop Local Mock Server")
+    fi
+    menu_items+=("🌐 Switch IP (Current: ${LLM_SERVER_IP})")
+    menu_items+=("❌ Cancel")
+
+    local selection
+    selection=$(printf '%s\n' "${menu_items[@]}" | eval "${launcher}" || true)
+
+    case "${selection}" in
+        *"Unload LLM"*)
+            cmd_unload
+            ;;
+        *"Change Context Size"*)
+            local ctx_options=(
+                "8192 (8k context)"
+                "16384 (16k context - standard)"
+                "32768 (32k context - high context)"
+                "❌ Cancel"
+            )
+            local ctx_pick
+            ctx_pick=$(printf '%s\n' "${ctx_options[@]}" | eval "${launcher}" || true)
+            local chosen_ctx=16384
+            case "${ctx_pick}" in
+                *"8192"*) chosen_ctx=8192 ;;
+                *"16384"*) chosen_ctx=16384 ;;
+                *"32768"*) chosen_ctx=32768 ;;
+                *) exit 0 ;;
+            esac
+
+            # Update default context in config.env
+            if [[ -f "${CONFIG_FILE}" ]]; then
+                sed -i "s|^LLM_DEFAULT_CTX=.*|LLM_DEFAULT_CTX=\"${chosen_ctx}\"|" "${CONFIG_FILE}"
+            fi
+
+            if [[ "${active_model}" != "None (VRAM Free)" && -n "${active_model}" ]]; then
+                cmd_switch "${active_model}" "${chosen_ctx}"
+            else
+                notify "RTX 4070" "Default context size set to ${chosen_ctx} tokens" "normal"
+            fi
+            ;;
+        *"Stop Local Mock Server"*)
+            cmd_stop_mock
+            ;;
+        *"Switch IP"*)
+            cmd_toggle_ip
+            ;;
+        "📦 "*|"✔ "*)
+            local picked_model
+            picked_model=$(echo "${selection}" | sed -E 's/^[📦✔] //; s/ \(Loaded\)$//')
+            cmd_switch "${picked_model}" "${LLM_DEFAULT_CTX:-16384}"
+            ;;
+        *)
+            exit 0
+            ;;
+    esac
+}
+
+# --- CLI Dispatcher ---
+
+case "${1:-status}" in
+    status)
+        cmd_status
+        ;;
+    menu)
+        cmd_menu
+        ;;
+    wake)
+        cmd_wake
+        ;;
+    unload)
+        cmd_unload
+        ;;
+    switch)
+        if [[ -z "${2:-}" ]]; then
+            echo "Usage: llm-ctl switch <model_filename.gguf> [ctx_size]"
+            exit 1
+        fi
+        cmd_switch "$2" "${3:-${LLM_DEFAULT_CTX:-16384}}"
+        ;;
+    start-mock)
+        cmd_start_mock
+        ;;
+    stop-mock)
+        cmd_stop_mock
+        ;;
+    toggle-ip)
+        cmd_toggle_ip
+        ;;
+    help|--help|-h)
+        cat <<EOF
+Usage: llm-ctl <command>
+
+Commands:
+  status       Outputs Waybar JSON status (sub-second timeout)
+  menu         Interactive launcher menu (offline & online workflows)
+  wake         Broadcast Wake-on-LAN packet to RTX 4070 MAC
+  unload       Free RTX 4070 GPU VRAM
+  switch <m>   Load specific GGUF model into VRAM
+  start-mock   Launch local mock server (127.0.0.1:8000)
+  stop-mock    Terminate local mock server
+  toggle-ip    Toggle between 127.0.0.1 and Real PC IP
+EOF
+        ;;
+    *)
+        echo "Unknown command: $1. Run 'llm-ctl help' for available commands."
+        exit 1
+        ;;
+esac

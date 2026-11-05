@@ -5,6 +5,12 @@ WshShell.CurrentDirectory = strDir
 
 strPyw = strDir & "\venv\Scripts\pythonw.exe"
 If Not fso.FileExists(strPyw) Then
+    strPyw = strDir & "\.venv\Scripts\pythonw.exe"
+End If
+If Not fso.FileExists(strPyw) Then
+    strPyw = strDir & "\..\venv\Scripts\pythonw.exe"
+End If
+If Not fso.FileExists(strPyw) Then
     strPyw = "pythonw.exe"
 End If
 

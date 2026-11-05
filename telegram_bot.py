@@ -1,5 +1,5 @@
 """
-telegram_bot.py — Высокопроизводительный тонкий клиент Telegram-бота (aiogram 3.x).
+schoolX/telegram_bot.py — Высокопроизводительный тонкий клиент Telegram-бота (aiogram 3.x).
 
 Архитектура:
 - Тонкий клиент: бот не загружает модели или векторные базы в память, а взаимодействует с центральным RAG API через асинхронные HTTP-запросы.
@@ -17,22 +17,11 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-# Настройка UTF-8 для консоли Windows и безопасный вывод для pythonw
+# Настройка UTF-8 для консоли Windows
 if sys.platform == "win32":
-    if sys.stdout is None:
-        try:
-            log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.log")
-            sys.stdout = open(log_file, "a", encoding="utf-8", errors="replace", buffering=1)
-        except Exception:
-            pass
-    if sys.stderr is None:
-        sys.stderr = sys.stdout
-
     try:
-        if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-        if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
 
@@ -53,7 +42,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
-logger = logging.getLogger("EXSCIORAGBot")
+logger = logging.getLogger("SchoolXRAGBot")
 
 # Параметры подключения
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -202,8 +191,12 @@ async def handle_start(message: types.Message):
     user_name = message.from_user.first_name if message.from_user else "пользователь"
     welcome_text = (
         f"👋 Здравствуйте, <b>{html.escape(user_name)}</b>!\n\n"
-        f"Я официальный ИИ-ассистент <b>EXSCIO</b>.\n\n"
-        f"Я помогу найти точную информацию в регламентах, положениях и нормативных документах базы знаний.\n\n"
+        f"Я официальный ИИ-ассистент <b>ГБОУ «Школа № 1468»</b>.\n\n"
+        f"Я знаю всё о:\n"
+        f"• 📋 <b>Правилах приема</b> в школу и детский сад\n"
+        f"• 🎓 <b>Профильных классах</b> (медицинский, инженерный, IT, медиа)\n"
+        f"• 📚 <b>Учебном графике</b>, каникулах и режиме дня\n"
+        f"• 🏛 <b>Адресах корпусов</b> и контактах руководства\n\n"
         f"Задайте мне любой вопрос в свободной форме!"
     )
     await message.answer(welcome_text, parse_mode=ParseMode.HTML, reply_markup=build_chat_keyboard())
@@ -215,7 +208,7 @@ async def handle_help(message: types.Message):
     help_text = (
         "💡 <b>Как пользоваться ботом:</b>\n\n"
         "1. Просто напишите ваш вопрос обычным сообщением.\n"
-        "2. Бот выполнит интеллектуальный поиск по нормативной базе знаний и подготовит ответ с точными ссылками на документы.\n"
+        "2. Бот выполнит интеллектуальный поиск по нормативной базе школы и подготовит ответ с точными ссылками на документы.\n"
         "3. Если вы хотите сменить тему беседы, нажмите <b>«🔄 Новая тема»</b> или отправьте команду /reset.\n\n"
         "<b>Команды:</b>\n"
         "• /reset — очистить память текущего диалога\n"
@@ -391,143 +384,8 @@ async def main():
     await dp.start_polling(bot)
 
 
-def run_gui():
-    """Графическое окно управления Telegram-ботом SchoolX."""
-    try:
-        import tkinter as tk
-    except ImportError:
-        asyncio.run(main())
-        return
-
-    import threading
-
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:
-            try:
-                ctypes.windll.user32.SetProcessDPIAware()
-            except Exception:
-                pass
-
-    root = tk.Tk()
-    root.title("SchoolX 2.0 — Telegram RAG Bot")
-    root.geometry("490x290")
-    root.resizable(False, False)
-    root.configure(bg="#100c1b")
-
-    ico_path = os.path.join(os.path.dirname(__file__), "rag_icon.ico")
-    if os.path.exists(ico_path):
-        try:
-            root.iconbitmap(ico_path)
-        except Exception:
-            pass
-
-    root.update_idletasks()
-    sw = root.winfo_screenwidth()
-    sh = root.winfo_screenheight()
-    x = max(0, (sw - 490) // 2)
-    y = max(0, (sh - 290) // 2)
-    root.geometry(f"490x290+{x}+{y}")
-
-    # Header
-    header = tk.Frame(root, bg="#100c1b", padx=20, pady=16)
-    header.pack(fill="x")
-    top_row = tk.Frame(header, bg="#100c1b")
-    top_row.pack(fill="x")
-
-    t_lbl = tk.Label(top_row, text="SchoolX Telegram Bot", font=("Segoe UI", 16, "bold"), fg="#f6effa", bg="#100c1b")
-    t_lbl.pack(side="left")
-
-    badge = tk.Label(top_row, text="  aiogram 3.x  ", font=("Segoe UI", 9, "bold"), fg="#38bdf8", bg="#0c2340")
-    badge.pack(side="right")
-
-    sub_lbl = tk.Label(header, text="Тонкий клиент для взаимодействия с корпоративным RAG API", font=("Segoe UI", 9), fg="#94a3b8", bg="#100c1b")
-    sub_lbl.pack(anchor="w", pady=(2, 0))
-
-    if not BOT_TOKEN:
-        card = tk.Frame(root, bg="#2d1520", bd=1, relief="solid", highlightthickness=1, highlightbackground="#6b213f", padx=16, pady=12)
-        card.pack(fill="x", padx=20, pady=(0, 14))
-
-        st_lbl = tk.Label(card, text="⚠️ Токен бота не указан в конфигурации .env", font=("Segoe UI", 10, "bold"), fg="#f87171", bg="#2d1520")
-        st_lbl.pack(anchor="w")
-
-        info_lbl = tk.Label(
-            card,
-            text="Создайте бота в @BotFather и укажите токен в .env:\nTELEGRAM_BOT_TOKEN=123456:ABC...",
-            font=("Segoe UI", 9),
-            fg="#fca5a5",
-            bg="#2d1520",
-            justify="left"
-        )
-        info_lbl.pack(anchor="w", pady=(4, 0))
-
-        btn = tk.Button(root, text="Закрыть", command=root.destroy, font=("Segoe UI", 9), fg="#f6effa", bg="#271f3a", activebackground="#342b4d", bd=1, relief="solid", padx=20, pady=5)
-        btn.pack(pady=10)
-        root.mainloop()
-        return
-
-    card = tk.Frame(root, bg="#1b1428", bd=1, relief="solid", highlightthickness=1, highlightbackground="#382e54", padx=16, pady=12)
-    card.pack(fill="x", padx=20, pady=(0, 14))
-
-    st_lbl = tk.Label(card, text="● Бот активен (Polling режим ожидания)", font=("Segoe UI", 10, "bold"), fg="#10b981", bg="#1b1428")
-    st_lbl.pack(anchor="w")
-
-    info_lbl = tk.Label(card, text=f"RAG API Шлюз: {RAG_API_BASE_URL}", font=("Segoe UI", 9), fg="#cbd5e1", bg="#1b1428")
-    info_lbl.pack(anchor="w", pady=(4, 0))
-
-    bot_loop = None
-
-    def bot_worker():
-        nonlocal bot_loop
-        bot_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(bot_loop)
-        try:
-            bot_loop.run_until_complete(main())
-        except Exception:
-            pass
-
-    def on_stop():
-        if bot_loop and bot_loop.is_running():
-            bot_loop.call_soon_threadsafe(bot_loop.stop)
-        try:
-            root.destroy()
-        except Exception:
-            pass
-
-    btn_frame = tk.Frame(root, bg="#100c1b", padx=20)
-    btn_frame.pack(fill="x")
-
-    btn_stop = tk.Button(
-        btn_frame,
-        text="⏹️ Остановить бота",
-        command=on_stop,
-        font=("Segoe UI", 9),
-        fg="#fca5a5",
-        bg="#271a2a",
-        activebackground="#3b1d28",
-        activeforeground="#ffffff",
-        bd=1,
-        relief="solid",
-        cursor="hand2",
-        pady=6
-    )
-    btn_stop.pack(fill="x")
-
-    root.protocol("WM_DELETE_WINDOW", on_stop)
-
-    t = threading.Thread(target=bot_worker, daemon=True)
-    t.start()
-
-    root.mainloop()
-
-
 if __name__ == "__main__":
-    if "--gui" in sys.argv:
-        run_gui()
-    else:
-        try:
-            asyncio.run(main())
-        except (KeyboardInterrupt, SystemExit):
-            logger.info("Бот остановлен пользователем.")
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен пользователем.")

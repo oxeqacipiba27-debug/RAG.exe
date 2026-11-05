@@ -1,19 +1,14 @@
 @echo off
 chcp 65001 >nul
-title RAG - Остановка Docker стека
+title EXSCIO - Остановка Docker контейнеров
 
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%"
+cd /d "%~dp0"
 
-set "PATH=%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin;C:\Program Files\Docker\Docker\resources\bin;%PATH%"
-
-echo ====================================================================
-echo   Остановка контейнеров Docker Compose...
-echo ====================================================================
-
+echo [i] Остановка Docker-контейнеров...
 docker compose down
-
-echo.
-echo [OK] Контейнеры остановлены.
-echo.
+if %errorlevel% equ 0 (
+    echo [OK] Docker-контейнеры успешно остановлены.
+) else (
+    echo [!] Ошибка при выполнении docker compose down.
+)
 pause

@@ -1,34 +1,51 @@
 @echo off
 chcp 65001 >nul
-title EXSCIO (LM Studio)
+title EXSCIO - Переключение на LM Studio
+
 cd /d "%~dp0"
 
-:: Проверка аргумента отладки (--console / -c)
-if "%~1"=="--console" goto CONSOLE_MODE
-if "%~1"=="-c" goto CONSOLE_MODE
+set "PY_CMD="
+set "PY_EXTRA="
 
-:: Запуск в скрытом режиме без открытия консольных окон
-wscript.exe "%~dp0start_lmstudio.vbs"
-exit
-
-:CONSOLE_MODE
-set PY_CMD=python
-if exist "venv\Scripts\python.exe" set PY_CMD=venv\Scripts\python.exe
-echo ========================================================
-echo   EXSCIO 2.0 - Запуск с бэкендом LM Studio
-echo ========================================================
-echo [i] Переключение профиля на LM Studio...
-"%PY_CMD%" switch_backend.py lmstudio
-echo [i] Запуск приложения EXSCIO...
-"%PY_CMD%" run_app.py --console
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [!] Desktop window exited with code %ERRORLEVEL%.
-    echo [i] Попытка запуска в браузере по умолчанию...
-    "%PY_CMD%" -m streamlit run rag_gui.py
-    if %ERRORLEVEL% NEQ 0 (
-        echo.
-        echo [X] Критическая ошибка при запуске приложения.
-        pause
-    )
+if exist "%~dp0venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0venv\Scripts\python.exe"
+    goto :python_found
 )
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+    goto :python_found
+)
+
+where python >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=python"
+    goto :python_found
+)
+
+where py >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=py"
+    set "PY_EXTRA=-3"
+    goto :python_found
+)
+
+echo [X] Ошибка: Python не найден в системе. Установите Python 3.10+ и добавьте его в PATH.
+pause
+exit /b 1
+
+:python_found
+
+echo =========================================================
+echo   EXSCIO: Запуск с локальным бэкендом LM Studio (:1234)
+echo =========================================================
+echo.
+
+echo [i] Переключение профиля на LM Studio...
+"%PY_CMD%" %PY_EXTRA% switch_backend.py lmstudio
+if %errorlevel% neq 0 (
+    echo [!] Не удалось переключить профиль на LM Studio.
+)
+
+echo.
+echo [i] Запуск EXSCIO...
+"%PY_CMD%" %PY_EXTRA% run_app.py %*

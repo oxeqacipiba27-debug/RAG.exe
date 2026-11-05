@@ -1,31 +1,40 @@
 @echo off
 chcp 65001 >nul
-title SchoolX Telegram RAG Bot
+title EXSCIO Telegram Bot
+
 cd /d "%~dp0"
 
-:: Проверка аргумента отладки (--console / -c)
-if "%~1"=="--console" goto CONSOLE_MODE
-if "%~1"=="-c" goto CONSOLE_MODE
+set "PY_CMD="
+set "PY_EXTRA="
 
-:: Запуск в скрытом режиме без открытия консольных окон
-wscript.exe "%~dp0start_telegram_bot.vbs"
-exit
-
-:CONSOLE_MODE
-set PY_CMD=python
-if exist "venv\Scripts\python.exe" set PY_CMD=venv\Scripts\python.exe
-
-echo ========================================================
-echo   SchoolX 2.0 - Консольный режим Telegram-бота
-echo ========================================================
-echo [i] Python Interpreter: %PY_CMD%
-echo [i] Starting Telegram Bot thin client...
-echo.
-
-"%PY_CMD%" telegram_bot.py
-
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [!] Процесс бота завершился с кодом %ERRORLEVEL%.
-    pause
+if exist "%~dp0venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0venv\Scripts\python.exe"
+    goto :python_found
 )
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+    goto :python_found
+)
+
+where python >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=python"
+    goto :python_found
+)
+
+where py >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=py"
+    set "PY_EXTRA=-3"
+    goto :python_found
+)
+
+echo [X] Ошибка: Python не найден в системе. Установите Python 3.10+ и добавьте его в PATH.
+pause
+exit /b 1
+
+:python_found
+
+echo [i] Запуск Telegram бота EXSCIO...
+"%PY_CMD%" %PY_EXTRA% telegram_bot.py %*
+pause

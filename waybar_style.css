@@ -1,0 +1,55 @@
+/* ==============================================================================
+ * Waybar CSS for Remote RTX 4070 LLM Module (Samsung One UI 9 Dark Theme)
+ * Append to ~/.config/waybar/style.css
+ * ============================================================================== */
+
+/* Base module pill */
+#custom-llm {
+  background: #1e2025;
+  border: 1px solid #2d3038;
+  border-radius: 12px;
+  padding: 3px 12px;
+  margin: 2px 2px;
+  color: #f2f4f8;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+}
+
+/* Online state: Model active in VRAM (vibrant emerald badge) */
+#custom-llm.online {
+  color: #30d158;
+  border-color: rgba(48, 209, 88, 0.45);
+  background: rgba(48, 209, 88, 0.12);
+}
+
+#custom-llm.online:hover {
+  background: #30d158;
+  color: #121316;
+  border-color: #30d158;
+}
+
+/* Idle state: Server reachable, VRAM unloaded (warm amber badge) */
+#custom-llm.idle {
+  color: #ff9f0a;
+  border-color: rgba(255, 159, 10, 0.45);
+  background: rgba(255, 159, 10, 0.12);
+}
+
+#custom-llm.idle:hover {
+  background: #ff9f0a;
+  color: #121316;
+  border-color: #ff9f0a;
+}
+
+/* Offline state: Server sleeping or network down (muted slate badge) */
+#custom-llm.offline {
+  color: #8c92a0;
+  border-color: #2d3038;
+  background: #16171b;
+}
+
+#custom-llm.offline:hover {
+  background: #252830;
+  color: #f2f4f8;
+  border-color: #ff453a;
+}
