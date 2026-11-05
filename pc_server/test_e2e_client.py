@@ -17,6 +17,14 @@ import sys
 import time
 from pathlib import Path
 
+# Ensure UTF-8 on Windows consoles (GEMINI.md Rule 5)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Paths
 PC_SERVER_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PC_SERVER_DIR.parent
@@ -54,16 +62,16 @@ def run_e2e_test():
         # 1. Health Check
         print("\n[2/6] Verifying client.check_health()...")
         health = client.check_health()
-        print(f"  ✔ Status: {health.get('status')}")
-        print(f"  ✔ Loaded LLM: {health.get('loaded_llm')}")
+        print(f"  [OK] Status: {health.get('status')}")
+        print(f"  [OK] Loaded LLM: {health.get('loaded_llm')}")
         assert health.get("status") == "online", "Server status must be online"
         assert health.get("embedding_active") is True, "Embedding service must be active"
 
         # 2. List Models
         print("\n[3/6] Verifying client.list_models()...")
         models = client.list_models()
-        print(f"  ✔ Available GGUF: {models.get('available_gguf')}")
-        print(f"  ✔ Active LLM: {models.get('active_llm')}")
+        print(f"  [OK] Available GGUF: {models.get('available_gguf')}")
+        print(f"  [OK] Active LLM: {models.get('active_llm')}")
         assert len(models.get("available_gguf", [])) > 0
 
         # 3. Embedding Generation (768-dim)
@@ -73,8 +81,8 @@ def run_e2e_test():
             "Tailscale WireGuard mesh encrypts cross-network inference traffic.",
         ]
         vectors = client.embed(texts)
-        print(f"  ✔ Generated {len(vectors)} embeddings.")
-        print(f"  ✔ Vector dimension: {len(vectors[0])} floats.")
+        print(f"  [OK] Generated {len(vectors)} embeddings.")
+        print(f"  [OK] Vector dimension: {len(vectors[0])} floats.")
         assert len(vectors) == 2
         assert len(vectors[0]) == 768, f"Expected 768 dimensions, got {len(vectors[0])}"
 
@@ -94,7 +102,7 @@ def run_e2e_test():
             print(token, end="", flush=True)
             collected_tokens.append(token)
             token_count += 1
-        print(f"\n  ✔ Successfully streamed {token_count} chunks!")
+        print(f"\n  [OK] Successfully streamed {token_count} chunks!")
         assert token_count > 0
 
         # 5. Model Switch & Unload
@@ -103,12 +111,12 @@ def run_e2e_test():
         h_switched = client.check_health()
         assert h_switched.get("loaded_llm") == "Llama-3.1-8B-Instruct-Q8_0.gguf"
         assert h_switched.get("ctx_size") == 8192
-        print(f"  ✔ Model switched to: {h_switched.get('loaded_llm')} (ctx: {h_switched.get('ctx_size')})")
+        print(f"  [OK] Model switched to: {h_switched.get('loaded_llm')} (ctx: {h_switched.get('ctx_size')})")
 
         client.unload_model()
         h_unloaded = client.check_health()
         assert h_unloaded.get("loaded_llm") is None
-        print("  ✔ Model unloaded, VRAM freed!")
+        print("  [OK] Model unloaded, VRAM freed!")
 
         # Verify stream_chat raises NoModelLoadedError when unloaded
         try:
@@ -116,7 +124,7 @@ def run_e2e_test():
                 pass
             assert False, "stream_chat should have raised NoModelLoadedError"
         except NoModelLoadedError:
-            print("  ✔ Verified NoModelLoadedError correctly raised when VRAM is unloaded.")
+            print("  [OK] Verified NoModelLoadedError correctly raised when VRAM is unloaded.")
 
         print("\n=================================================================")
         print("    ALL E2E CLIENT INTEGRATION CHECKS PASSED PERFECTLY!          ")

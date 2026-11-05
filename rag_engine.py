@@ -272,7 +272,7 @@ class BackendHealthChecker:
         model = config.llm_model if service_type == "LLM" else config.embedding_model
 
         lines = [
-            f"❌ [RAG HealthCheck] Сервис {service_type} недоступен по адресу: {url}",
+            f"[X] [RAG HealthCheck] Сервис {service_type} недоступен по адресу: {url}",
             f"   Провайдер: {provider} | Модель: {model}",
             f"   Детали ошибки: {error_detail}",
             "",
@@ -2175,7 +2175,7 @@ if __name__ == "__main__":
     rag = RAGPipeline()
     is_healthy, status_report = rag.check_health()
     if is_healthy:
-        print(f"  [✓] {status_report}")
+        print(f"  [OK] {status_report}")
     else:
         print(f"\n{status_report}\n")
 

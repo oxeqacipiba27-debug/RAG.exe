@@ -130,7 +130,7 @@ def cosine_similarity(v1, v2):
 def build_index(target_path: Path = None):
     """Индексация документов."""
     print("=" * 60, flush=True)
-    print(" 🛠 Создание индекса базы знаний", flush=True)
+    print(" [BUILD] Создание индекса базы знаний", flush=True)
     print("=" * 60, flush=True)
 
     docs = extract_documents(target_path)
@@ -166,7 +166,7 @@ def build_index(target_path: Path = None):
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         json.dump(all_chunks, f, ensure_ascii=False)
 
-    print(f"\n✅ Индексация завершена! Всего сохранено фрагментов: {len(all_chunks)}", flush=True)
+    print(f"\n[OK] Индексация завершена! Всего сохранено фрагментов: {len(all_chunks)}", flush=True)
     print(f"Файл индекса: {INDEX_FILE}", flush=True)
     print("Теперь запустите чат: python rag_direct.py", flush=True)
 
@@ -217,7 +217,7 @@ def search_index(query: str, index_data, top_k: int = 4):
 def chat_loop():
     """Интерактивный диалог с локальной нейросетью."""
     if not Path(INDEX_FILE).exists():
-        print(f"❌ Файл индекса '{INDEX_FILE}' не найден.")
+        print(f"[X] Файл индекса '{INDEX_FILE}' не найден.")
         print("Сначала проиндексируйте файлы командой: python rag_direct.py --index")
         return
 
@@ -225,14 +225,14 @@ def chat_loop():
         index_data = json.load(f)
 
     print("=" * 60)
-    print(" 🚀 Локальный RAG-чат (LM Studio + Direct API)")
+    print(" [CHAT] Локальный RAG-чат (LM Studio + Direct API)")
     print("=" * 60)
     print("База знаний загружена. Фрагментов:", len(index_data))
     print("Введите вопрос (или 'exit' для выхода):\n")
 
     while True:
         try:
-            query = input("\n💬 Вопрос: ").strip()
+            query = input("\n[?] Вопрос: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nВыход.")
             break
@@ -243,7 +243,7 @@ def chat_loop():
 
         results = search_index(query, index_data, top_k=4)
 
-        print("\n📄 Найденные источники:")
+        print("\n[DOC] Найденные источники:")
         for r in results:
             print(f"  • {r['source']} (стр. {r['page']})")
 
@@ -260,7 +260,7 @@ def chat_loop():
             f"КОНТЕКСТ:\n{context}"
         )
 
-        print("\n🤖 Ответ LM Studio:\n" + "-" * 40)
+        print("\n[LLM] Ответ LM Studio:\n" + "-" * 40)
         try:
             payload = {
                 "model": "local-model",
@@ -294,7 +294,7 @@ def chat_loop():
                             pass
             print("\n" + "-" * 40)
         except Exception as e:
-            print(f"\n❌ Ошибка связи с LM Studio: {e}")
+            print(f"\n[X] Ошибка связи с LM Studio: {e}")
             print("Убедитесь, что в LM Studio нажат 'Start Server' во вкладке Local Server!")
 
 if __name__ == "__main__":

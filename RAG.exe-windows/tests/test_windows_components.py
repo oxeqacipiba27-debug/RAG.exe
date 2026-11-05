@@ -296,7 +296,14 @@ class TestStreamlitGUIIntegration(unittest.TestCase):
     def test_streamlit_dry_run_startup(self):
         """Запуск Streamlit rag_gui.py на тестовом порту с проверкой HTTP 200 OK."""
         import httpx
-        test_port = 8597
+        import socket
+
+        def _find_free_port():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', 0))
+                return s.getsockname()[1]
+
+        test_port = _find_free_port()
         proc = subprocess.Popen(
             [
                 sys.executable, "-m", "streamlit", "run", str(WINDOWS_DIR / "rag_gui.py"),
@@ -326,18 +333,26 @@ class TestStreamlitGUIIntegration(unittest.TestCase):
                     pass
             self.assertTrue(ready, "Streamlit сервер должен успешно ответить HTTP 200 OK")
         finally:
-            proc.terminate()
             try:
-                proc.wait(timeout=5)
+                proc.terminate()
+                proc.wait(timeout=3)
             except Exception:
-                proc.kill()
+                pass
+            if proc.poll() is None:
+                try:
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
 
 
 class TestCliScriptsCompatibility(unittest.TestCase):
     """7. Проверка скриптов CLI на соответствие стандарту Windows cp1251 (Правило 5)."""
 
     def test_cli_scripts_ascii_markers(self):
-        cli_files = ["rag_chat.py", "ingest.py", "run_api.py", "switch_backend.py"]
+        cli_files = ["rag_chat.py", "ingest.py", "run_api.py", "switch_backend.py", "rag_direct.py", "rag_remote_client.py"]
         for fname in cli_files:
             fpath = WINDOWS_DIR / fname
             content = fpath.read_text(encoding="utf-8")
@@ -346,6 +361,8 @@ class TestCliScriptsCompatibility(unittest.TestCase):
             self.assertNotIn("⚠️", content, f"{fname} не должен содержать эмодзи предупреждения")
             self.assertNotIn("✅", content, f"{fname} не должен содержать эмодзи галочки")
             self.assertNotIn("❌", content, f"{fname} не должен содержать эмодзи крестика")
+            self.assertNotIn("✔", content, f"{fname} не должен содержать юникод-галочку")
+            self.assertNotIn("✓", content, f"{fname} не должен содержать юникод-галочку")
 
 
 if __name__ == "__main__":

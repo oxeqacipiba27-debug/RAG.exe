@@ -17,6 +17,14 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, Generator, List, Optional, Union
 
+# Ensure UTF-8 on Windows consoles (GEMINI.md Rule 5)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import httpx
 import openai
 from openai import OpenAI, APIConnectionError, APITimeoutError
@@ -191,7 +199,7 @@ class Remote4070Client:
             return data
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError, httpx.HTTPError) as err:
             raise ServerOfflineError(
-                f"\n❌ [CONNECTION FAILED] Unable to reach RTX 4070 Server at {self.base_url}.\n"
+                f"\n[X] [CONNECTION FAILED] Unable to reach RTX 4070 Server at {self.base_url}.\n"
                 f"   Reason: {type(err).__name__} ({err})\n\n"
                 f"   Troubleshooting steps:\n"
                 f"   1. Wake Server PC: Run 'llm-ctl wake' or select 'Send Wake-on-LAN' in Waybar menu.\n"
@@ -251,7 +259,7 @@ class Remote4070Client:
             return vectors
         except (APIConnectionError, APITimeoutError, httpx.NetworkError, httpx.TimeoutException) as err:
             raise ServerOfflineError(
-                f"\n❌ [CONNECTION DROPPED] Lost connection to {self.base_url} during embedding generation.\n"
+                f"\n[X] [CONNECTION DROPPED] Lost connection to {self.base_url} during embedding generation.\n"
                 f"   Reason: {type(err).__name__} ({err})"
             ) from err
 
@@ -274,9 +282,9 @@ class Remote4070Client:
         loaded_llm = health.get("loaded_llm")
         if not loaded_llm:
             raise NoModelLoadedError(
-                f"\n⚠️  [VRAM UNLOADED] RTX 4070 is ONLINE at {self.base_url}, but NO LLM is loaded in VRAM.\n"
+                f"\n[!] [VRAM UNLOADED] RTX 4070 is ONLINE at {self.base_url}, but NO LLM is loaded in VRAM.\n"
                 f"   To load a model:\n"
-                f"   1. Use Waybar: Click the '󰚩 IDLE' pill and select a model from the menu.\n"
+                f"   1. Use Waybar: Click the 'IDLE' pill and select a model from the menu.\n"
                 f"   2. Via CLI:    Run 'llm-ctl menu' or 'llm-ctl switch <model.gguf>'\n"
                 f"   3. Via Python: client.switch_model('Qwen2.5-14B-Instruct-Q4_K_M.gguf')\n"
             )
@@ -314,7 +322,7 @@ class Remote4070Client:
                     yield chunk.choices[0].delta.content
         except (APIConnectionError, APITimeoutError, httpx.NetworkError, httpx.TimeoutException) as err:
             raise ServerOfflineError(
-                f"\n❌ [CONNECTION DROPPED] Lost connection to {self.base_url} during token streaming.\n"
+                f"\n[X] [CONNECTION DROPPED] Lost connection to {self.base_url} during token streaming.\n"
                 f"   Reason: {type(err).__name__} ({err})"
             ) from err
 
@@ -332,9 +340,9 @@ if __name__ == "__main__":
     print(f"\n[1/3] Checking Server Health at {client.base_url}...")
     try:
         health = client.check_health()
-        print(f"  ✔ Status: {health.get('status')}")
-        print(f"  ✔ Loaded LLM: {health.get('loaded_llm')}")
-        print(f"  ✔ Embedding Service: {health.get('embedding_active')}")
+        print(f"  [OK] Status: {health.get('status')}")
+        print(f"  [OK] Loaded LLM: {health.get('loaded_llm')}")
+        print(f"  [OK] Embedding Service: {health.get('embedding_active')}")
     except ServerOfflineError as e:
         print(e)
         sys.exit(1)
@@ -347,11 +355,11 @@ if __name__ == "__main__":
     ]
     try:
         embeddings = client.embed(sample_texts)
-        print(f"  ✔ Generated {len(embeddings)} vectors.")
-        print(f"  ✔ Vector dimension: {len(embeddings[0])} floats (matches nomic-embed-text-v1.5)")
-        print(f"  ✔ Sample slice: [{embeddings[0][0]:.4f}, {embeddings[0][1]:.4f}, {embeddings[0][2]:.4f}, ...]")
+        print(f"  [OK] Generated {len(embeddings)} vectors.")
+        print(f"  [OK] Vector dimension: {len(embeddings[0])} floats (matches nomic-embed-text-v1.5)")
+        print(f"  [OK] Sample slice: [{embeddings[0][0]:.4f}, {embeddings[0][1]:.4f}, {embeddings[0][2]:.4f}, ...]")
     except Exception as e:
-        print(f"  ❌ Embedding failed: {e}")
+        print(f"  [X] Embedding failed: {e}")
 
     # Step 3: Streaming Chat with RAG Context
     print("\n[3/3] Testing Streaming Chat Completion with RAG Context...")
@@ -369,10 +377,10 @@ if __name__ == "__main__":
             system_prompt="You are a precise technical engineering assistant.",
         ):
             print(token, end="", flush=True)
-        print("\n\n✔ Streaming completion test successful!")
+        print("\n\n[OK] Streaming completion test successful!")
     except NoModelLoadedError as e:
         print(e)
     except Exception as e:
-        print(f"❌ Chat failed: {e}")
+        print(f"[X] Chat failed: {e}")
 
     print("=" * 65)

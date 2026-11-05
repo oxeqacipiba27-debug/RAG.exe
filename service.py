@@ -10,7 +10,7 @@ Architecture:
 
 Hardware Optimizations:
 - Dynamic LLM: -ngl 99 -c <ctx_size> --flash-attn -ctk q8_0 -ctv q8_0 --parallel 2 --cont-batching
-- Embedding:   -ngl 99 --embedding --pooling mean -c 8192 -ub 2048
+- Embedding:   -ngl 0 (CPU per GEMINI.md Rule 7) --embedding --pooling mean -c 8192 -ub 2048
 - Watchdogs:   10-minute (600s) VRAM auto-idle unloader & Simracing/Gaming Guard (15s)
 """
 
@@ -266,13 +266,14 @@ def start_embedding_worker() -> bool:
             state.embedding_active = False
             return False
 
-    # RTX 4070 hardware flags: -ngl 99 --embedding --pooling mean -c 8192 -ub 2048
+    # Hardware flags: -ngl 0 by default (CPU embeddings per GEMINI.md Rule 7) --embedding --pooling mean -c 8192 -ub 2048
+    embed_ngl = os.getenv("EMBED_NGL", "0")
     cmd = [
         str(exe),
         "-m", str(model_path),
         "--host", LLM_INTERNAL_HOST,
         "--port", str(EMBED_PORT),
-        "-ngl", "99",
+        "-ngl", embed_ngl,
         "--embedding",
         "--pooling", "mean",
         "-c", "8192",
