@@ -1,5 +1,5 @@
 """
-schoolX/api/routes.py — REST и SSE эндпоинты API для взаимодействия с тонким клиентом Telegram-бота.
+api/routes.py — REST и SSE эндпоинты API для взаимодействия с тонким клиентом Telegram-бота.
 """
 
 import asyncio

@@ -28,7 +28,7 @@ import urllib.parse
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Настройка UTF-8 для вывода в Windows
 if sys.platform == "win32":
@@ -377,7 +377,7 @@ class ChunkMetadata(BaseModel):
     sheet: Optional[str] = Field(default=None, description="Имя листа для табличных документов Excel")
     char_count: int = Field(default=0, description="Число символов во фрагменте")
     token_count: int = Field(default=0, description="Число токенов во фрагменте")
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="ISO timestamp создания")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO timestamp создания")
     content_hash: str = Field(default="", description="SHA-256 хеш очищенного текста")
 
 

@@ -1,5 +1,5 @@
 """
-schoolX/api/app.py — Главное приложение FastAPI для Enterprise RAG 2.0.
+api/app.py — Главное приложение FastAPI для EXSCIO 2.0.
 """
 
 import logging
@@ -26,11 +26,19 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, "pipeline", None) is not None:
         if getattr(app.state, "session_manager", None) is None:
             app.state.session_manager = SessionManager()
-        yield
+        try:
+            yield
+        finally:
+            sm = getattr(app.state, "session_manager", None)
+            if sm and hasattr(sm, "close"):
+                try:
+                    sm.close()
+                except Exception:
+                    pass
         return
 
     logger.info("=" * 60)
-    logger.info("  Инициализация API-сервера Enterprise RAG...")
+    logger.info("  Инициализация API-сервера EXSCIO...")
     logger.info("=" * 60)
 
     # 1. Загрузка конфигурации из .env
@@ -73,7 +81,7 @@ def create_app(
 ) -> FastAPI:
     """Фабрика создания экземпляра приложения FastAPI."""
     app = FastAPI(
-        title="SchoolX Enterprise RAG API",
+        title="EXSCIO API",
         description="Централизованный REST/SSE API-сервис RAG для Telegram-бота и внешних клиентов",
         version="2.0.0",
         lifespan=lifespan
@@ -120,7 +128,7 @@ def create_app(
         demo_file = static_dir / "widget_demo.html"
         if demo_file.exists():
             return FileResponse(demo_file, media_type="text/html")
-        return HTMLResponse("<h2>SchoolX RAG Web Widget Demo</h2><p>Файл демо-страницы не найден.</p>")
+        return HTMLResponse("<h2>EXSCIO Web Widget Demo</h2><p>Файл демо-страницы не найден.</p>")
 
     # Прямой алиас /health на верхнем уровне
     @app.get("/health", tags=["System"])

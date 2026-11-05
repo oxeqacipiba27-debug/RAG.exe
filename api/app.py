@@ -26,7 +26,15 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, "pipeline", None) is not None:
         if getattr(app.state, "session_manager", None) is None:
             app.state.session_manager = SessionManager()
-        yield
+        try:
+            yield
+        finally:
+            sm = getattr(app.state, "session_manager", None)
+            if sm and hasattr(sm, "close"):
+                try:
+                    sm.close()
+                except Exception:
+                    pass
         return
 
     logger.info("=" * 60)
@@ -54,9 +62,16 @@ async def lifespan(app: FastAPI):
     app.state.pipeline = pipeline
     app.state.session_manager = session_manager
 
-    yield
-
-    logger.info("Завершение работы API-сервера RAG...")
+    try:
+        yield
+    finally:
+        logger.info("Завершение работы API-сервера RAG...")
+        sm = getattr(app.state, "session_manager", None)
+        if sm and hasattr(sm, "close"):
+            try:
+                sm.close()
+            except Exception:
+                pass
 
 
 def create_app(

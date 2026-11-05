@@ -110,7 +110,7 @@ class TestRAGApiServer(unittest.TestCase):
 
     def tearDown(self):
         self.env_patcher.stop()
-        if hasattr(self, "session_mgr"):
+        if hasattr(self, "session_mgr") and self.session_mgr:
             self.session_mgr.close()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 

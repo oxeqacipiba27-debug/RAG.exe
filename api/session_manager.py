@@ -38,20 +38,21 @@ class SessionManager:
 
     @contextmanager
     def _get_connection(self):
+        """Контекстный менеджер для безопасного управления транзакцией и закрытием SQLite соединения."""
         if self._persistent_conn is not None:
-            with self._persistent_conn as conn:
-                yield conn
-            return
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+            with self._persistent_conn:
+                yield self._persistent_conn
+        else:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            try:
+                with conn:
+                    yield conn
+            finally:
+                conn.close()
 
     def close(self) -> None:
-        """Закрывает персистентное соединение (если используется)."""
+        """Закрывает открытые соединения SQLite при уничтожении менеджера."""
         with self._lock:
             if self._persistent_conn is not None:
                 try:
@@ -59,6 +60,18 @@ class SessionManager:
                 except Exception:
                     pass
                 self._persistent_conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _init_sqlite(self) -> None:
         """Инициализация таблиц для персистентного хранения сессий и сообщений."""

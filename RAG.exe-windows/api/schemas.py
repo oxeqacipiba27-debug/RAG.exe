@@ -1,5 +1,5 @@
 """
-schoolX/api/schemas.py — Pydantic-схемы для REST API и SSE эндпоинтов RAG-системы.
+api/schemas.py — Pydantic-схемы для REST API и SSE эндпоинтов RAG-системы.
 """
 
 from typing import Any, Dict, List, Optional, Union

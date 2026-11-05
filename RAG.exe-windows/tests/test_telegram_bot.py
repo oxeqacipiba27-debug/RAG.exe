@@ -1,14 +1,14 @@
 """
-Unit tests for schoolX/telegram_bot.py helper functions and message processing.
+Unit tests for telegram_bot.py helper functions and message processing.
 """
 
 import sys
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from telegram_bot import (
     build_chat_keyboard,

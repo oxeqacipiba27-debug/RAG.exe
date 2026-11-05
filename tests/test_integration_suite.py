@@ -93,7 +93,7 @@ class TestFullRAGIntegrationSuite(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        if hasattr(cls, "session_mgr"):
+        if hasattr(cls, "session_mgr") and cls.session_mgr:
             cls.session_mgr.close()
 
     def test_01_api_health_check(self):

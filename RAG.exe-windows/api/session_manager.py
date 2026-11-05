@@ -1,14 +1,14 @@
 """
-schoolX/api/session_manager.py — Потокобезопасный менеджер сессий и истории диалогов.
+api/session_manager.py — Потокобезопасный менеджер сессий и истории диалогов.
 Хранит контекст бесед в SQLite базе данных (data/sessions.db) с in-memory кэшированием.
 """
 
-import contextlib
 import os
 import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 import logging
@@ -36,7 +36,7 @@ class SessionManager:
             self._persistent_conn.row_factory = sqlite3.Row
         self._init_sqlite()
 
-    @contextlib.contextmanager
+    @contextmanager
     def _get_connection(self):
         """Контекстный менеджер для безопасного управления транзакцией и закрытием SQLite соединения."""
         if self._persistent_conn is not None:

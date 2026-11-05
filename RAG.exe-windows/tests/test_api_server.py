@@ -1,5 +1,5 @@
 """
-Unit & Integration tests for SchoolX RAG FastAPI Server.
+Unit & Integration tests for EXSCIO RAG FastAPI Server.
 Tests endpoints: /api/v1/health, /api/v1/telegram/message,
 /api/v1/telegram/message/stream, /api/v1/chat/sessions/{chat_id}/reset,
 and authentication middleware using Python's standard unittest.
@@ -15,9 +15,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from starlette.testclient import TestClient
 

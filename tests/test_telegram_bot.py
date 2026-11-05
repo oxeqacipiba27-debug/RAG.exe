@@ -2,7 +2,6 @@
 Unit tests for telegram_bot.py helper functions and message processing.
 """
 
-import os
 import sys
 import unittest
 from pathlib import Path

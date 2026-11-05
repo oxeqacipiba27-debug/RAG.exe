@@ -1,5 +1,5 @@
 """
-schoolX/api/middleware.py — Middleware аутентификации, логирования и обработки ошибок.
+api/middleware.py — Middleware аутентификации, логирования и обработки ошибок.
 """
 
 import os
