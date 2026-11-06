@@ -28,6 +28,7 @@ if sys.platform == "win32":
 import json
 import re
 import time
+import pickle
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -99,97 +100,262 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
     --surface: #1a1427;
     --surface2: #221a31;
     --surface-hover: #332340;
-    --line: #312344;
-    --line-active: #5a3e7e;
+    --line: #382a49;
+    --line-active: #51415e;
+    --line-focus: #634379;
     --text: #f6effa;
-    --text-muted: #a69cb8;
+    --text-muted: #b7aac8;
     --accent: #c792ff;
-    --accent-glow: rgba(199, 146, 255, 0.35);
-    --lavender: #e4bcff;
-    --pink: #ff8ad8;
-    --good: #3fb950;
-    --warn: #f59e0b;
-    --danger: #f85149;
-    --chat-max-width: 900px;
+    --accent-btn: #c58af6;
+    --accent-btn-hover: #dbb1ff;
+    --btn-text: #1c0b2c;
+    --pink: #f286cf;
+    --danger: #ffabb7;
+    --danger-bg: #452436;
+    --danger-line: #6b334f;
+    --good: #b6e5c9;
+    --good-bg: #21372e;
+    --good-line: #365344;
+    --gradient: linear-gradient(135deg, #c792ff 0%, #f286cf 100%);
+    --chat-max-width: 860px;
+    --chat-quarter-width: calc(var(--chat-max-width) * 0.25);
 }
 
+/* Фон приложения */
 .stApp {
     background-color: var(--bg) !important;
     color: var(--text) !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+    overflow-x: hidden !important;
 }
 
+/* Центрирование основного содержимого на всех масштабах и разрешениях */
+section.main,
+[data-testid="stMain"] {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+.main .block-container,
+[data-testid="stMainBlockContainer"],
+.stMainBlockContainer,
+[data-testid="block-container"] {
+    max-width: var(--chat-max-width) !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-top: 1.75rem !important;
+    padding-bottom: 7rem !important;
+    padding-left: 1.25rem !important;
+    padding-right: 1.25rem !important;
+    box-sizing: border-box !important;
+}
+
+/* Боковая панель: 2 фиксированных размера (раскрытый 340px с полной видимостью текста без артефактов '...', и скрытый) */
+section[data-testid="stSidebar"],
 [data-testid="stSidebar"] {
+    min-width: 340px !important;
+    max-width: 340px !important;
+    width: 340px !important;
     background-color: var(--surface) !important;
     border-right: 1px solid var(--line) !important;
 }
 
-.tag {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--accent);
-    background: rgba(199, 146, 255, 0.12);
-    border: 1px solid rgba(199, 146, 255, 0.25);
-    padding: 3px 10px;
-    border-radius: 6px;
-    margin-bottom: 8px;
+.stSidebar .stButton button {
+    white-space: nowrap !important;
+    font-size: 13px !important;
+    padding: 8px 12px !important;
 }
 
+/* Фирменная плашка-кикер (.tag как на mcloly.ru) */
+.tag {
+    font-size: 0.78rem !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    color: var(--accent) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin-bottom: 8px !important;
+    font-weight: 600 !important;
+}
+.tag::before {
+    content: '' !important;
+    display: inline-block !important;
+    width: 22px !important;
+    height: 1px !important;
+    background: var(--accent) !important;
+}
+
+/* Заголовки */
+h1, h2, h3, h4 {
+    color: var(--text) !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em !important;
+}
+
+/* Кастомный тонкий скроллбар */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--line-focus);
+}
+
+/* Шапка чата */
+.chat-header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.chat-header-title {
+    margin: 0;
+    padding: 0;
+    font-size: clamp(20px, 4vw, 26px);
+    font-weight: 700;
+    color: var(--text);
+}
+.chat-header-stat {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Карточки сообщений */
 .chat-bubble-user {
-    background: #251b38;
-    border: 1px solid #4a3468;
-    border-radius: 12px 12px 2px 12px;
-    padding: 14px 18px;
-    margin-bottom: 14px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    background: #2e213a !important;
+    border: 1px solid var(--line-active) !important;
+    border-radius: 14px 14px 2px 14px !important;
+    padding: 16px 20px !important;
+    margin-bottom: 14px !important;
+    color: var(--text) !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25) !important;
 }
 
 .chat-bubble-assistant {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--accent);
-    border-radius: 4px 12px 12px 12px;
-    padding: 16px 20px;
-    margin-bottom: 14px;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+    background: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 14px 14px 14px 2px !important;
+    padding: 18px 22px !important;
+    margin-bottom: 14px !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
 }
 
+/* Блок цепочки рассуждений (Reasoning Step) */
 .reasoning-step {
-    font-size: 12px;
-    color: var(--lavender);
-    background: rgba(199, 146, 255, 0.08);
-    border: 1px solid rgba(199, 146, 255, 0.2);
-    padding: 6px 12px;
-    border-radius: 6px;
-    margin-bottom: 12px;
-    display: inline-block;
+    background: var(--surface2) !important;
+    border-left: 3px solid var(--accent) !important;
+    padding: 8px 14px !important;
+    margin-bottom: 12px !important;
+    border-radius: 0 8px 8px 0 !important;
+    font-size: 12px !important;
+    color: var(--text-muted) !important;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
 }
 
+/* Карточки архитектуры и демонстрации */
 .arch-card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 18px 22px;
-    margin-bottom: 16px;
+    background: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 14px !important;
+    padding: 22px !important;
+    margin-bottom: 16px !important;
+    transition: all 0.2s ease-in-out !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
 }
-
+.arch-card:hover {
+    border-color: var(--line-active) !important;
+    box-shadow: 0 4px 24px rgba(199, 146, 255, 0.12) !important;
+}
 .arch-badge {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 3px 8px;
-    border-radius: 4px;
-    margin-bottom: 8px;
+    display: inline-block !important;
+    padding: 3px 10px !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    margin-bottom: 8px !important;
 }
-.badge-hybrid { background: rgba(199, 146, 255, 0.15); color: #d8b4fe; border: 1px solid #c084fc; }
-.badge-security { background: rgba(63, 185, 80, 0.15); color: #4ade80; border: 1px solid #22c55e; }
-.badge-arch { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid #0284c7; }
+.badge-hybrid { background: rgba(199, 146, 255, 0.15) !important; color: var(--accent) !important; border: 1px solid var(--line-focus) !important; }
+.badge-security { background: var(--good-bg) !important; color: var(--good) !important; border: 1px solid var(--good-line) !important; }
+.badge-speed { background: rgba(242, 134, 207, 0.15) !important; color: var(--pink) !important; border: 1px solid #6b334f !important; }
+.badge-arch { background: rgba(199, 146, 255, 0.12) !important; color: var(--accent) !important; border: 1px solid var(--line-active) !important; }
 
+/* Форматирование Markdown */
+.stMarkdown {
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+
+
+/* Фиксированная панель ввода: максимум 1/4 ширины чата */
+[data-testid="stBottom"] {
+    background-color: var(--bg) !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    left: 0 !important;
+    right: 0 !important;
+    border-top: 1px solid var(--line) !important;
+}
+
+[data-testid="stBottom"] > div,
+[data-testid="stBottomBlockContainer"],
+.stBottomBlockContainer {
+    max-width: var(--chat-max-width) !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+    padding-bottom: 1.25rem !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    justify-content: center !important;
+}
+
+.stChatInputContainer,
+[data-testid="stChatInput"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-sizing: border-box !important;
+}
+.stChatInputContainer textarea {
+    background-color: #100d19 !important;
+    border: 1px solid var(--line-active) !important;
+    color: var(--text) !important;
+    border-radius: 10px !important;
+}
+.stChatInputContainer textarea:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 14px rgba(199, 146, 255, 0.28) !important;
+}
+
+/* Кнопки с адаптивным переносом текста */
 .stButton button {
     background: var(--surface2) !important;
     color: var(--text) !important;
@@ -198,17 +364,20 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
     transition: all 0.18s ease-in-out !important;
     white-space: normal !important;
     height: auto !important;
-    min-height: 40px !important;
+    min-height: 42px !important;
     padding: 8px 14px !important;
+    line-height: 1.3 !important;
+    word-break: break-word !important;
     font-weight: 500 !important;
 }
 .stButton button:hover {
     background: var(--surface-hover) !important;
     border-color: var(--accent) !important;
     color: #ffffff !important;
-    box-shadow: 0 0 14px var(--accent-glow) !important;
+    box-shadow: 0 0 16px rgba(197, 138, 246, 0.25) !important;
 }
 
+/* Адаптивные блоки спойлеров и цитат */
 [data-testid="stExpander"] {
     background: var(--surface) !important;
     border: 1px solid var(--line) !important;
@@ -217,6 +386,7 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
     margin-bottom: 14px !important;
 }
 
+/* Селекты и поля ввода */
 [data-baseweb="select"] > div {
     background-color: var(--surface2) !important;
     border-color: var(--line) !important;
@@ -224,6 +394,88 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
 }
 [data-baseweb="select"] > div:hover {
     border-color: var(--accent) !important;
+}
+
+/* Медиа-запросы адаптивности под любые разрешения */
+@media (max-width: 1024px) {
+    :root {
+        --chat-max-width: 100%;
+        --chat-quarter-width: 25%;
+    }
+}
+
+@media (max-width: 768px) {
+    :root {
+        --chat-quarter-width: min(90%, 280px);
+    }
+
+    .main .block-container,
+    [data-testid="stMainBlockContainer"],
+    .stMainBlockContainer,
+    [data-testid="block-container"] {
+        padding-top: 1rem !important;
+        padding-bottom: 6rem !important;
+        padding-left: 0.85rem !important;
+        padding-right: 0.85rem !important;
+    }
+
+    [data-testid="stBottom"] > div,
+    [data-testid="stBottomBlockContainer"],
+    .stBottomBlockContainer {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+        padding-bottom: 0.75rem !important;
+    }
+
+    /* Адаптивная сетка быстрых кнопок: 2x2 на планшетах */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 calc(50% - 8px) !important;
+        min-width: calc(50% - 8px) !important;
+    }
+
+    .chat-bubble-user,
+    .chat-bubble-assistant {
+        padding: 12px 14px !important;
+        font-size: 14px !important;
+    }
+
+    .chat-header-container {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 4px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    :root {
+        --chat-quarter-width: 100%;
+    }
+
+    /* Смартфоны с компактным экраном: кнопки в 1 столбец */
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+    }
+
+    .main .block-container,
+    [data-testid="stMainBlockContainer"],
+    .stMainBlockContainer,
+    [data-testid="block-container"] {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+    }
+
+    [data-testid="stBottom"] > div,
+    [data-testid="stBottomBlockContainer"],
+    .stBottomBlockContainer {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+    }
 }
 </style>
 """
@@ -268,28 +520,59 @@ def get_client_pipeline(base_url: str, llm_model: str, embed_model: str) -> RAGP
 
 @st.cache_data(ttl=120)
 def load_index_metadata(index_path: str) -> Dict[str, Any]:
-    """Загрузка сводной информации о документах базы знаний в режиме 'только чтение'."""
+    """Загрузка сводной информации о документах базы знаний в режиме 'только чтение' с мгновенным кэшированием."""
     p = Path(index_path)
     if not p.exists():
         return {"exists": False, "chunk_count": 0, "documents": []}
+
+    cache_p = p.with_name(f"{p.stem}.cache.pkl")
+    chunks = None
+    if cache_p.exists():
+        try:
+            c_stat = cache_p.stat()
+            t_stat = p.stat()
+            if c_stat.st_mtime >= t_stat.st_mtime:
+                with open(cache_p, "rb") as f:
+                    c_data = pickle.load(f)
+                if isinstance(c_data, dict) and "chunks" in c_data:
+                    chunks = c_data["chunks"]
+        except Exception:
+            chunks = None
+
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            chunks = json.load(f)
-
         doc_summary: Dict[str, Dict[str, Any]] = {}
-        for c in chunks:
-            meta = c.get("metadata", {})
-            src = meta.get("source", "Неизвестный документ")
-            page = meta.get("page", 1)
+        total_count = 0
 
-            if src not in doc_summary:
-                doc_summary[src] = {
-                    "source": src,
-                    "pages": set(),
-                    "chunks_count": 0
-                }
-            doc_summary[src]["pages"].add(page)
-            doc_summary[src]["chunks_count"] += 1
+        if chunks is not None:
+            total_count = len(chunks)
+            for c in chunks:
+                src = c.metadata.source if hasattr(c, "metadata") else "Неизвестный документ"
+                page = c.metadata.page if hasattr(c, "metadata") else 1
+                if src not in doc_summary:
+                    doc_summary[src] = {
+                        "source": src,
+                        "pages": set(),
+                        "chunks_count": 0
+                    }
+                doc_summary[src]["pages"].add(page)
+                doc_summary[src]["chunks_count"] += 1
+        else:
+            with open(p, "r", encoding="utf-8") as f:
+                raw_chunks = json.load(f)
+            total_count = len(raw_chunks)
+            for c in raw_chunks:
+                meta = c.get("metadata", {})
+                src = meta.get("source", "Неизвестный документ")
+                page = meta.get("page", 1)
+
+                if src not in doc_summary:
+                    doc_summary[src] = {
+                        "source": src,
+                        "pages": set(),
+                        "chunks_count": 0
+                    }
+                doc_summary[src]["pages"].add(page)
+                doc_summary[src]["chunks_count"] += 1
 
         docs_list = []
         for src, info in sorted(doc_summary.items(), key=lambda x: x[0]):
@@ -301,7 +584,7 @@ def load_index_metadata(index_path: str) -> Dict[str, Any]:
 
         return {
             "exists": True,
-            "chunk_count": len(chunks),
+            "chunk_count": total_count,
             "documents": docs_list
         }
     except Exception:
@@ -513,18 +796,20 @@ def render_message(msg: Dict[str, Any]) -> None:
 # РАЗДЕЛ 1: ЧАТ С ДОКУМЕНТАМИ
 # =====================================================================
 if mode == "💬 Чат с документами":
-    st.markdown(
-        """
-        <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px;">
-            <div>
-                <div class="tag">ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ</div>
-                <h2 style="margin: 0; font-size: 26px; font-weight: 700; color: var(--text);">Чат с корпоративными документами</h2>
+    with st.container():
+        st.markdown(
+            f"""
+            <div class="chat-header-container">
+                <div>
+                    <div class="tag">ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ ДОКУМЕНТОВ</div>
+                    <h2 class="chat-header-title">Диалог с базой документов</h2>
+                </div>
+                <div class="chat-header-stat">Топ-K: 5 • Лимит контекста: 2500 токенов</div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 12px 0 20px 0;'>", unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True
+        )
+    st.markdown("<hr style='border: none; border-bottom: 1px solid var(--line); margin: 16px 0 24px 0;'>", unsafe_allow_html=True)
 
     if not server_online:
         st.error(f"⚠️ Основной сервер инференса недоступен по адресу `{MAIN_SERVER_URL}`. Пожалуйста, убедитесь, что сервер запущен.")

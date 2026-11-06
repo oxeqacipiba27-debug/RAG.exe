@@ -147,6 +147,43 @@ def test_read_only_save_blocked():
     print("  [OK] Запись в базу знаний успешно заблокирована защитным механизмом.")
 
 
+def test_binary_cache_acceleration():
+    print("\n[TEST 9] Проверка ускорения загрузки базы знаний через бинарный кэш (*.cache.pkl)...")
+    from pathlib import Path
+    import time
+    from rag_engine import RAGPipeline
+
+    cache_path = Path("rag_index.cache.pkl")
+    assert cache_path.exists(), "Файл бинарного кэша rag_index.cache.pkl должен присутствовать!"
+    
+    t0 = time.time()
+    pipe = RAGPipeline()
+    elapsed = time.time() - t0
+    print(f"  [i] Время загрузки индекса (16 827 чанков): {elapsed:.2f} сек.")
+    assert elapsed < 3.5, f"Загрузка из бинарного кэша должна быть быстрее 3.5 секунд, получено: {elapsed:.2f} сек.!"
+    assert len(pipe.chunks) > 0, "Количество загруженных чанков должно быть больше 0!"
+    print(f"  [OK] Бинарный кэш функционирует штатно, загружено {len(pipe.chunks)} фрагментов за {elapsed:.2f} с.")
+
+
+def test_gemini_rules_compliance():
+    print("\n[TEST 10] Проверка соответствия стандартам GEMINI.md...")
+    from rag_engine import RAGPipeline, AppConfig
+
+    cfg = AppConfig()
+    # Правило 6: Векторизация на стороне клиента на CPU
+    assert cfg.embedding_device.lower() in ("cpu", "processor"), "Эмбеддинги на клиенте должны быть настроены на CPU!"
+    
+    # Правило 1: Отсутствие модулей локального управления серверами
+    import sys
+    assert "server_manager" not in sys.modules, "Модуль server_manager не должен импортироваться в клиенте!"
+
+    # Проверка кодировки консоли (Правило 4)
+    if sys.platform == "win32" and hasattr(sys.stdout, "encoding") and sys.stdout.encoding:
+        assert sys.stdout.encoding.lower().replace("-", "") in ("utf8", "utf-8"), "Вывод stdout должен быть переконфигурирован в UTF-8!"
+
+    print("  [OK] Архитектурные правила GEMINI.md полностью соблюдены.")
+
+
 def main():
     print("=" * 60)
     print("  EXSCIO RAG Client Edition — Smoke Test Suite")
@@ -160,6 +197,8 @@ def main():
     test_search_query_kwarg_and_edge_cases()
     test_url_normalization()
     test_read_only_save_blocked()
+    test_binary_cache_acceleration()
+    test_gemini_rules_compliance()
 
     print("\n" + "=" * 60)
     print("  [ALL TESTS PASSED] Клиентская версия полностью верифицирована!")

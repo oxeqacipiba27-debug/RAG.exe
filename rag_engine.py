@@ -20,6 +20,7 @@ import os
 import sys
 import json
 import time
+import pickle
 import math
 import re
 import hashlib
@@ -27,7 +28,7 @@ import urllib.parse
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Настройка UTF-8 для вывода в Windows
 if sys.platform == "win32":
@@ -353,7 +354,7 @@ class ChunkMetadata(BaseModel):
     sheet: Optional[str] = Field(default=None, description="Имя листа для табличных документов Excel")
     char_count: int = Field(default=0, description="Число символов во фрагменте")
     token_count: int = Field(default=0, description="Число токенов во фрагменте")
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="ISO timestamp создания")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO timestamp создания")
     content_hash: str = Field(default="", description="SHA-256 хеш очищенного текста")
 
 
@@ -853,8 +854,22 @@ class DenseVectorStore:
         self.device_preference = (device or cfg.embedding_device or "cpu").lower()
 
         # Сетевые клиенты для REMOTE режима
-        self.client = httpx.Client(base_url=self.base_url, timeout=45.0, trust_env=False)
-        self.openai_client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        emb_api_k = self.api_key or "not-needed"
+        headers = {}
+        if emb_api_k and emb_api_k != "not-needed":
+            headers["Authorization"] = f"Bearer {emb_api_k}"
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout=httpx.Timeout(connect=2.0, read=25.0, write=5.0, pool=5.0),
+            trust_env=False
+        )
+        self.openai_client = OpenAI(
+            base_url=self.base_url,
+            api_key=emb_api_k,
+            max_retries=1,
+            timeout=httpx.Timeout(connect=2.0, read=25.0, write=5.0, pool=5.0)
+        )
 
         # Локальная модель SentenceTransformer (инициализируется при первом требовании)
         self.st_model = None
@@ -922,13 +937,13 @@ class DenseVectorStore:
             return vec
 
         # 2. Удаленный режим (OpenAI API / LM Studio / Ollama)
-        delay = 1.0
+        delay = 0.5
         for attempt in range(max_retries):
             try:
                 res = self.openai_client.embeddings.create(
                     model=self.model_name,
                     input=formatted_input,
-                    timeout=30.0
+                    timeout=20.0
                 )
                 if res.data and len(res.data) > 0:
                     arr = np.array(res.data[0].embedding, dtype=np.float32)
@@ -944,13 +959,14 @@ class DenseVectorStore:
                     return vec
             except EmbeddingDimensionMismatchError:
                 raise
-            except Exception:
+            except Exception as e:
+                is_conn_error = isinstance(e, (openai.APIConnectionError, httpx.ConnectError, httpx.ConnectTimeout, ConnectionRefusedError))
                 # Fallback прямой httpx запрос
                 try:
                     resp = self.client.post(
                         "/embeddings",
                         json={"model": self.model_name, "input": formatted_input},
-                        timeout=30.0
+                        timeout=3.0 if is_conn_error else 15.0
                     )
                     if resp.status_code == 200:
                         data = resp.json()["data"][0]["embedding"]
@@ -969,8 +985,11 @@ class DenseVectorStore:
                     raise
                 except Exception:
                     pass
+                if is_conn_error:
+                    # Сервер оффлайн — прерываем цикл повторов и позволяем BM25 сработать мгновенно
+                    break
                 time.sleep(delay)
-                delay *= 2.0
+                delay *= 1.5
         return None
 
     def get_batch_embeddings(self, texts: List[str], is_query: bool = False, batch_size: int = 16) -> List[Optional[List[float]]]:
@@ -1711,17 +1730,62 @@ class RAGPipeline:
         return True, "Все бэкенды RAG (LLM + Embeddings) доступны и функционируют штатно."
 
     def load_index(self) -> bool:
-        if not Path(self.index_file).exists():
+        idx_path = Path(self.index_file)
+        if not idx_path.exists() and not idx_path.is_absolute():
+            candidates = [
+                Path(__file__).resolve().parent / idx_path.name,
+                Path.home() / "Desktop" / "schoolX" / idx_path.name,
+            ]
+            for cand in candidates:
+                if cand.exists():
+                    logger.info(f"Найден индекс документов по пути: {cand}")
+                    idx_path = cand
+                    break
+
+        if not idx_path.exists():
             logger.warning(f"Файл индекса {self.index_file} не найден.")
             return False
 
-        logger.info(f"Загрузка индекса из {self.index_file}...")
+        target_stat = idx_path.stat()
+        cache_path = idx_path.with_name(f"{idx_path.stem}.cache.pkl")
+
+        # 1. Сверхбыстрая загрузка из бинарного кэша при совпадении mtime и размера файла (~1-2с вместо 10-18с)
+        if cache_path.exists():
+            try:
+                c_stat = cache_path.stat()
+                if c_stat.st_mtime >= target_stat.st_mtime:
+                    t0 = time.time()
+                    with open(cache_path, "rb") as f:
+                        cache_data = pickle.load(f)
+                    if (
+                        isinstance(cache_data, dict)
+                        and cache_data.get("version") == 1
+                        and cache_data.get("source_size") == target_stat.st_size
+                        and "chunks" in cache_data
+                        and "bm25" in cache_data
+                        and "matrix" in cache_data
+                    ):
+                        self.chunks = cache_data["chunks"]
+                        self.bm25 = cache_data["bm25"]
+                        self.dense_store.matrix = cache_data["matrix"]
+                        if self.dense_store.matrix is not None:
+                            self.dense_store.embedding_dim = self.dense_store.matrix.shape[1]
+                        self.retriever = HybridRetriever(self.dense_store, self.bm25, self.chunks)
+                        logger.info(
+                            f"Индекс мгновенно загружен из бинарного кэша {cache_path.name} за {time.time()-t0:.2f}s! "
+                            f"Загружено чанков: {len(self.chunks)}"
+                        )
+                        return True
+            except Exception as e:
+                logger.warning(f"Сбой чтения бинарного кэша {cache_path.name}: {e}. Выполняется разбор исходного JSON.")
+
+        logger.info(f"Загрузка индекса из исходного JSON {idx_path}...")
         t0 = time.time()
         try:
-            with open(self.index_file, "r", encoding="utf-8") as f:
+            with open(idx_path, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
         except Exception as e:
-            logger.error(f"Ошибка чтения {self.index_file}: {e}")
+            logger.error(f"Ошибка чтения {idx_path}: {e}")
             return False
 
         self.chunks = []
@@ -1743,7 +1807,7 @@ class RAGPipeline:
                     page=item.get("page", 1),
                     char_count=len(text_content),
                     token_count=count_tokens(text_content),
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                     content_hash=hashlib.sha256(text_content.encode("utf-8")).hexdigest()[:16]
                 )
 
@@ -1764,6 +1828,25 @@ class RAGPipeline:
         self.dense_store.build_matrix(self.chunks)
         self.retriever = HybridRetriever(self.dense_store, self.bm25, self.chunks)
         logger.info(f"Индекс успешно загружен за {time.time()-t0:.2f}s! Загружено чанков: {len(self.chunks)}")
+
+        # Сохранение бинарного кэша для сверхбыстрой последующей загрузки
+        try:
+            cache_payload = {
+                "version": 1,
+                "source_mtime": target_stat.st_mtime,
+                "source_size": target_stat.st_size,
+                "chunks": self.chunks,
+                "bm25": self.bm25,
+                "matrix": self.dense_store.matrix,
+            }
+            tmp_cache = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}_{int(time.time()*1000)}")
+            with open(tmp_cache, "wb") as f:
+                pickle.dump(cache_payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_cache, cache_path)
+            logger.info(f"Бинарный кэш индекса успешно сохранен: {cache_path.name}")
+        except Exception as e:
+            logger.warning(f"Не удалось записать бинарный кэш {cache_path}: {e}")
+
         return True
 
     def save_index(self, max_backups: int = 3):

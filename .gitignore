@@ -23,6 +23,7 @@ __pycache__/
 
 # RAG Large Storage & Vector Index (Read-only data, delivered separately)
 rag_index.json
+*.cache.pkl
 *.json.bak
 *.tmp*
 
