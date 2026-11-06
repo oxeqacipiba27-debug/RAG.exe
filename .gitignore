@@ -70,3 +70,4 @@ run_motor_sequence.py
 run_technolab_pipeline.py
 TECHNOLAB_MANUAL.md
 
+.agents/
