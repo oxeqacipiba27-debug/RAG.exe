@@ -253,18 +253,28 @@ def main():
                 print("[i] Remote RTX 4070 оффлайн. В GUI доступны кнопки Wake-on-LAN и старта локального Mock-сервера.")
 
         else:
-            cli = server_manager.get_lms_cli_path()
-            if cli:
-                print("[i] Инициализация локального ИИ-бэкенда LM Studio и загрузка моделей...")
-                ok, msg = server_manager.ensure_autonomous_stack(
-                    progress_callback=lambda text: print(f"    -> {text}")
-                )
-                if ok:
-                    print("[OK] Модели LM Studio успешно загружены в память GPU.")
+            base_url = os.getenv("LLM_BASE_URL", "")
+            is_remote_host = any(x in base_url for x in ["192.168.", "100.", "10.", "http://1", "https://"]) and not any(x in base_url for x in ["127.0.0.1", "localhost"])
+            if is_remote_host:
+                print(f"[i] Настроен удаленный хост LM Studio ({base_url}).")
+                online = server_manager.is_server_online(base_url, timeout=0.8)
+                if online:
+                    print(f"[OK] Удаленный сервер LM Studio в сети: {base_url}")
                 else:
-                    print(f"[!] Предупреждение при загрузке моделей: {msg}")
+                    print(f"[i] Удаленный сервер LM Studio ({base_url}) оффлайн или не отвечает.")
             else:
-                print("[i] LM Studio CLI не найден. RAG запустится в режиме внешнего сервера.")
+                cli = server_manager.get_lms_cli_path()
+                if cli:
+                    print("[i] Инициализация локального ИИ-бэкенда LM Studio и загрузка моделей...")
+                    ok, msg = server_manager.ensure_autonomous_stack(
+                        progress_callback=lambda text: print(f"    -> {text}")
+                    )
+                    if ok:
+                        print("[OK] Модели LM Studio успешно загружены в память GPU.")
+                    else:
+                        print(f"[!] Предупреждение при загрузке моделей: {msg}")
+                else:
+                    print("[i] LM Studio CLI не найден. RAG запустится в режиме внешнего сервера.")
     except Exception as e:
         print(f"[!] Ошибка при инициализации бэкенда: {e}")
 
