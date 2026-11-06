@@ -1,10 +1,10 @@
 """
-switch_backend.py — Утилита переключения активного бэкенда EXSCIO для Windows 10/11:
+switch_backend.py — Кроссплатформенная утилита переключения активного бэкенда EXSCIO (Windows / Linux):
 Поддерживает профили:
   1. lmstudio (порт 1234)
   2. ollama   (порт 11434)
-  3. docker   (порт 11434 через контейнер Ollama в WSL2)
-  4. rtx4070  (порт 8000 через LAN / Tailscale)
+  3. docker   (порт 11434 через контейнер)
+  4. rtx4070  (порт 8000 / 1234 через LAN / Tailscale)
 
 Использование:
   python switch_backend.py lmstudio
@@ -45,8 +45,8 @@ PROFILE_NAMES = {
     "lmstudio": "LM Studio (http://localhost:1234/v1)",
     "ollama": "Ollama Native (http://localhost:11434/v1)",
     "docker": "Docker Ollama Container (http://localhost:11434/v1)",
-    "rtx4070": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000)",
-    "remote": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000)"
+    "rtx4070": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000/:1234)",
+    "remote": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000/:1234)"
 }
 
 
@@ -56,7 +56,7 @@ def get_current_backend() -> str:
     with open(ENV_FILE, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             if line.strip().startswith("LLM_PROVIDER="):
-                prov = line.strip().split("=")[1]
+                prov = line.strip().split("=")[1].strip()
                 if prov == "LM_STUDIO":
                     return "LM Studio"
                 elif prov == "OLLAMA_LOCAL":
@@ -64,9 +64,9 @@ def get_current_backend() -> str:
                 elif prov == "DOCKER":
                     return "Docker Container"
                 elif prov in ("RTX4070_REMOTE", "REMOTE_PC"):
-                    return "Remote RTX 4070 (ПК)"
+                    return "Remote RTX 4070 PC"
                 return prov
-    return "Неизвестен"
+    return "Неизвестный бэкенд"
 
 
 def switch_to(profile_key: str) -> bool:
@@ -81,27 +81,28 @@ def switch_to(profile_key: str) -> bool:
         return False
 
     shutil.copyfile(source_path, ENV_FILE)
-    print(f"\n[OK] Активный бэкенд успешно переключен на: {PROFILE_NAMES[key]}")
+    print(f"\n[OK] Успешно активирован бэкенд: {PROFILE_NAMES.get(key, key)}")
     print(f"     Конфигурация скопирована в {ENV_FILE.name}\n")
     return True
 
 
 def interactive_menu():
     print("=" * 65)
-    print("       МЕНЮ ПЕРЕКЛЮЧЕНИЯ БЭКЕНДА EXSCIO (WINDOWS)")
+    print("       МЕНЮ ПЕРЕКЛЮЧЕНИЯ БЭКЕНДА EXSCIO")
     print("=" * 65)
     print(f"  Текущий активный бэкенд: [{get_current_backend()}]")
     print("-" * 65)
     print("  [1] LM Studio             (http://localhost:1234/v1)")
     print("  [2] Ollama Native         (http://localhost:11434/v1)")
     print("  [3] Docker Container      (http://localhost:11434/v1)")
-    print("  [4] Remote RTX 4070 PC    (Tailscale / LAN / Cloudflare :8000)")
-    print("  [5] Запустить RAG сейчас  (run_app.py)")
+    print("  [4] Remote RTX 4070 PC    (Tailscale / LAN / Cloudflare :8000/:1234)")
+    print("  [5] Проверить доступность (test_backends.py)")
+    print("  [6] Запустить RAG сейчас  (run_app.py)")
     print("  [0] Выход")
     print("=" * 65)
 
     try:
-        choice = input("Выберите вариант [0-5]: ").strip()
+        choice = input("Выберите вариант [0-6]: ").strip()
     except (EOFError, KeyboardInterrupt):
         return
 
@@ -114,10 +115,19 @@ def interactive_menu():
     elif choice == "4":
         switch_to("rtx4070")
     elif choice == "5":
+        try:
+            from test_backends import test_lm_studio, test_ollama_native, test_docker, test_rtx4070_remote
+            test_lm_studio()
+            test_ollama_native()
+            test_docker()
+            test_rtx4070_remote()
+        except Exception as e:
+            print(f"[!] Сбой запуска тестов бэкендов: {e}")
+    elif choice == "6":
         import subprocess
         print("\n[i] Запуск приложения EXSCIO...")
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
-        subprocess.run([sys.executable, str(ROOT_DIR / "run_app.py")])
+        subprocess.run([sys.executable, str(ROOT_DIR / "run_app.py")], creationflags=creationflags)
     elif choice == "0":
         print("Отмена.")
     else:

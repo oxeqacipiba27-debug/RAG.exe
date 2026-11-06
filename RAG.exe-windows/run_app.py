@@ -64,7 +64,7 @@ def has_display() -> bool:
 
 
 def notify_desktop(title: str, message: str):
-    """Отправляет нативное уведомление (на Windows через PowerShell BalloonTip, на Linux через notify-send)."""
+    """Отправляет нативное уведомление (на Windows через PowerShell BalloonTip, на Linux через hyprctl/notify-send)."""
     if sys.platform == "win32":
         try:
             ps_cmd = (
@@ -76,16 +76,33 @@ def notify_desktop(title: str, message: str):
                 f"$notify.showballoontip(3000, '{title}', '{message}', [system.windows.forms.tooltipicon]::Info)"
             )
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd], creationflags=creationflags)
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags
+            )
         except Exception:
             pass
         return
+
+    # Linux Hyprland notification
+    if os.getenv("HYPRLAND_INSTANCE_SIGNATURE") and shutil.which("hyprctl"):
+        try:
+            subprocess.run(
+                ["hyprctl", "notify", "1", "3500", "rgb(c792ff)", f"{title}: {message}"],
+                capture_output=True,
+                timeout=2
+            )
+            return
+        except Exception:
+            pass
 
     # Linux notify-send fallback
     if shutil.which("notify-send"):
         try:
             icon = get_window_icon()
-            cmd = ["notify-send", title, message]
+            cmd = ["notify-send", "-a", "EXSCIO", "-u", "normal", title, message]
             if icon:
                 cmd.extend(["-i", icon])
             subprocess.run(cmd, capture_output=True, timeout=2)
@@ -380,6 +397,23 @@ def main():
             window.events.closed += cleanup
 
             def on_gui_ready():
+                if sys.platform != "win32":
+                    if gui_backend == "qt":
+                        try:
+                            from PyQt6.QtWidgets import QApplication
+                            app = QApplication.instance()
+                            if app:
+                                app.setApplicationName("EXSCIO")
+                                app.setDesktopFileName("exscio")
+                        except Exception:
+                            pass
+                    elif gui_backend == "gtk":
+                        try:
+                            from gi.repository import GLib
+                            GLib.set_prgname("exscio")
+                            GLib.set_application_name("EXSCIO")
+                        except Exception:
+                            pass
                 notify_desktop("EXSCIO 2.0", "Автономный RAG готов к работе")
 
             try:

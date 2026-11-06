@@ -47,9 +47,9 @@ def main():
     args = parser.parse_args()
 
     print("=" * 65)
-    print(" 🚀 Запуск EXSCIO 2.0 API Server")
-    print(f" 📡 Адрес: http://{args.host}:{args.port}")
-    print(f" 📖 Документация Swagger: http://localhost:{args.port}/docs")
+    print(" [i] Запуск EXSCIO 2.0 API Server")
+    print(f" [i] Адрес: http://{args.host}:{args.port}")
+    print(f" [i] Документация Swagger: http://localhost:{args.port}/docs")
     print("=" * 65)
 
     uvicorn.run(

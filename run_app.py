@@ -1,16 +1,24 @@
 """
-run_app.py — Автономный десктопный загрузчик EXSCIO (Arch Linux / Cross-platform).
+run_app.py — Автономный десктопный загрузчик EXSCIO для Windows 10/11 (Cross-Platform).
 Обеспечивает запуск локального бэкенда (LM Studio / Ollama / Docker) при открытии RAG,
-загрузку моделей в GPU, старт веб-сервера Streamlit и отображение нативного окна (pywebview WebKit2GTK).
+загрузку моделей в GPU, старт веб-сервера Streamlit и отображение нативного окна (pywebview Microsoft Edge WebView2 / WinForms).
 При закрытии приложения автоматически выгружает модели и освобождает память GPU.
-В headless-окружении (без $DISPLAY / $WAYLAND_DISPLAY) или при отсутствии WebKit2GTK
-обеспечивает плавный fallback в стандартный веб-браузер.
+В headless-окружении или при отсутствии графического движка обеспечивает плавный fallback в стандартный веб-браузер.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+
+# Безопасная настройка кодировки консоли во избежание UnicodeEncodeError на Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
+
 import time
 import atexit
 import signal
@@ -19,14 +27,6 @@ import subprocess
 import webbrowser
 from pathlib import Path
 from typing import Optional
-
-# Безопасная настройка кодировки консоли во избежание UnicodeEncodeError
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-    except Exception:
-        pass
 
 import httpx
 
@@ -48,15 +48,8 @@ APP_URL = f"http://localhost:{APP_PORT}"
 
 
 def get_window_icon() -> Optional[str]:
-    """Возвращает корректный путь к иконке окна: .ico для Windows WinForms, .png для Linux GTK."""
-    if sys.platform == "win32":
-        candidate = APP_DIR / "rag_icon.ico"
-        if candidate.exists():
-            return str(candidate.resolve())
-        return None
-
-    # Linux / Arch GTK WebKit2
-    for candidate_name in ["rag_icon.png", "static/exscio.png", "rag_icon.ico"]:
+    """Возвращает корректный путь к иконке окна (.ico для Windows pywebview / WinForms)."""
+    for candidate_name in ["rag_icon.ico", "rag_icon.png", "static/exscio.png"]:
         candidate_path = APP_DIR / candidate_name
         if candidate_path.exists():
             return str(candidate_path.resolve())
@@ -64,16 +57,36 @@ def get_window_icon() -> Optional[str]:
 
 
 def has_display() -> bool:
-    """Проверяет наличие активной графической подсистемы (X11 или Wayland)."""
+    """Проверяет наличие активной графической подсистемы."""
     if sys.platform == "win32":
         return True
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def notify_desktop(title: str, message: str):
-    """Отправляет нативное уведомление в Hyprland или системный демон уведомлений Linux."""
+    """Отправляет нативное уведомление (на Windows через PowerShell BalloonTip, на Linux через hyprctl/notify-send)."""
     if sys.platform == "win32":
+        try:
+            ps_cmd = (
+                "[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null; "
+                "[reflection.assembly]::loadwithpartialname('System.Drawing') | Out-Null; "
+                "$notify = new-object system.windows.forms.notifyicon; "
+                "$notify.icon = [System.Drawing.SystemIcons]::Information; "
+                "$notify.visible = $true; "
+                f"$notify.showballoontip(3000, '{title}', '{message}', [system.windows.forms.tooltipicon]::Info)"
+            )
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags
+            )
+        except Exception:
+            pass
         return
+
+    # Linux Hyprland notification
     if os.getenv("HYPRLAND_INSTANCE_SIGNATURE") and shutil.which("hyprctl"):
         try:
             subprocess.run(
@@ -84,10 +97,12 @@ def notify_desktop(title: str, message: str):
             return
         except Exception:
             pass
+
+    # Linux notify-send fallback
     if shutil.which("notify-send"):
         try:
             icon = get_window_icon()
-            cmd = ["notify-send", title, message]
+            cmd = ["notify-send", "-a", "EXSCIO", "-u", "normal", title, message]
             if icon:
                 cmd.extend(["-i", icon])
             subprocess.run(cmd, capture_output=True, timeout=2)
@@ -98,27 +113,21 @@ def notify_desktop(title: str, message: str):
 def get_available_gui_backend() -> Optional[str]:
     """
     Определяет оптимальный графический бэкенд для pywebview.
-    На Wayland / Hyprland отдает приоритет Qt (PyQt6-WebEngine) для нативной отрисовки,
-    жестов тачпада, корректного масштабирования и защиты от сбоев DMA-BUF WebKitGTK.
+    На Windows 10/11 отдает приоритет Microsoft Edge WebView2 ('edgechromium'),
+    обеспечивающему аппаратное ускорение и совместимость с современными веб-стандартами.
     """
     if sys.platform == "win32":
-        return None
+        return "edgechromium"
 
+    # Cross-platform / Linux fallback
     is_wayland = bool(os.getenv("WAYLAND_DISPLAY") or os.getenv("HYPRLAND_INSTANCE_SIGNATURE"))
-
-    # 1. Проверка доступности Qt (PyQt6 / qtpy)
     has_qt = False
     try:
         from PyQt6 import QtWebEngineWidgets  # noqa: F401
         has_qt = True
     except Exception:
-        try:
-            import qtpy  # noqa: F401
-            has_qt = True
-        except Exception:
-            pass
+        pass
 
-    # 2. Проверка доступности WebKit2GTK
     has_gtk = False
     try:
         import gi
@@ -127,14 +136,7 @@ def get_available_gui_backend() -> Optional[str]:
         from gi.repository import Gtk, WebKit2  # noqa: F401
         has_gtk = True
     except Exception:
-        try:
-            import gi
-            gi.require_version('Gtk', '3.0')
-            gi.require_version('WebKit2', '4.0')
-            from gi.repository import Gtk, WebKit2  # noqa: F401
-            has_gtk = True
-        except Exception:
-            pass
+        pass
 
     if is_wayland:
         if has_qt:
@@ -153,28 +155,36 @@ def get_available_gui_backend() -> Optional[str]:
 
 
 def free_port(port: int = APP_PORT):
-    """Гарантирует освобождение порта перед запуском как на Linux (lsof/fuser/ss), так и на Windows."""
+    """
+    Гарантирует освобождение порта перед запуском.
+    На Windows использует netstat -ano и taskkill /F /PID (согласно правилу 3 GEMINI.md).
+    На Linux использует lsof / fuser / ss.
+    """
     try:
         if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             res = subprocess.run(
                 ["netstat", "-ano"],
                 capture_output=True,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=creationflags
             )
             for line in res.stdout.splitlines():
                 if f":{port} " in line and "LISTENING" in line:
                     parts = line.strip().split()
-                    pid = parts[-1]
-                    if pid and pid != "0" and int(pid) != os.getpid():
-                        subprocess.run(
-                            ["taskkill", "/F", "/PID", pid],
-                            capture_output=True,
-                            creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                        time.sleep(0.5)
+                    try:
+                        pid = parts[-1]
+                        if pid and pid != "0" and int(pid) != os.getpid():
+                            subprocess.run(
+                                ["taskkill", "/F", "/PID", pid],
+                                capture_output=True,
+                                creationflags=creationflags
+                            )
+                            time.sleep(0.5)
+                    except (ValueError, IndexError):
+                        continue
         else:
-            # Linux Arch / POSIX
+            # Linux fallback
             if shutil.which("lsof"):
                 res = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
                 if res.returncode == 0 and res.stdout.strip():
@@ -206,7 +216,7 @@ def main():
     active_provider = os.getenv("LLM_PROVIDER", "LM_STUDIO").upper()
 
     print("=" * 65)
-    print("  EXSCIO 2.0 — Автономный комплекс искусственного интеллекта")
+    print("  EXSCIO 2.0 — Автономный комплекс искусственного интеллекта (Windows)")
     print(f"  Платформа: [{sys.platform.upper()}]  |  Бэкенд: [{active_provider}]")
     gpu_status = server_manager.get_gpu_summary()
     print(f"  Аппаратное ускорение: {gpu_status}")
@@ -225,7 +235,7 @@ def main():
                 print(f"[!] Предупреждение при проверке Ollama: {msg}")
 
         elif "DOCKER" in active_provider:
-            print("[i] Инициализация Docker-контейнеров с Ollama...")
+            print("[i] Инициализация Docker-контейнеров с Ollama под WSL2...")
             ok, msg = server_manager.start_docker_compose()
             if ok:
                 print("[OK] Docker-стек запущен.")
@@ -262,7 +272,7 @@ def main():
     free_port(APP_PORT)
 
     print(f"[i] Запуск интерфейса Streamlit на порту {APP_PORT}...")
-    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "streamlit", "run", str(APP_DIR / "rag_gui.py"),
@@ -293,7 +303,7 @@ def main():
             except Exception:
                 pass
 
-        # Выгрузка моделей из памяти GPU при закрытии RAG (для LM Studio)
+        # Выгрузка моделей из памяти GPU при закрытии RAG (для LM Studio согласно правилу 1 GEMINI.md)
         if "LM_STUDIO" in active_provider:
             try:
                 print("[i] Освобождение памяти GPU (выгрузка моделей LM Studio)...")
@@ -333,20 +343,20 @@ def main():
     else:
         print("[!] Предупреждение: Сервер отвечает дольше обычного, попытка открытия окна...")
 
-    # 4. Отображение окна приложения (WebKit2GTK / WebBrowser Fallback / Headless)
+    # 4. Отображение окна приложения (pywebview Edge WebView2 / WinForms / Браузер Fallback)
     is_headless = any(arg in sys.argv for arg in ("--headless", "-h", "--no-gui"))
     prefer_browser = "--browser" in sys.argv
 
     def run_browser_fallback(reason: str):
         print(f"[i] {reason}")
         if has_display():
-            print(f"[i] Открытие в браузере по умолчанию: {APP_URL}")
+            print(f"[i] Открытие в веб-браузере по умолчанию: {APP_URL}")
             try:
                 webbrowser.open(APP_URL)
             except Exception:
                 pass
         else:
-            print(f"[i] Headless-режим: Графический сервер недоступен.")
+            print(f"[i] Headless-режим: Графический интерфейс недоступен.")
             print(f"[i] Подключитесь через веб-браузер по адресу: {APP_URL}")
         try:
             proc.wait()
@@ -367,50 +377,56 @@ def main():
         elif prefer_browser:
             run_browser_fallback("Запрошен режим работы через веб-браузер (--browser).")
         elif not has_display():
-            run_browser_fallback("Графический дисплей ($DISPLAY / $WAYLAND_DISPLAY) не обнаружен (Headless / SSH режим).")
+            run_browser_fallback("Графический дисплей не обнаружен.")
         elif not HAS_WEBVIEW:
-            run_browser_fallback("Библиотека pywebview не установлена в текущем окружении.")
+            run_browser_fallback("Библиотека pywebview не найдена, открываем в системном браузере.")
         else:
             gui_backend = get_available_gui_backend()
-            if not gui_backend and sys.platform != "win32":
-                run_browser_fallback("Не найден поддерживаемый графический движок (PyQt6 или WebKit2GTK).")
-            else:
-                try:
-                    backend_label = (gui_backend or "winforms").upper()
-                    print(f"[OK] Открытие нативного окна EXSCIO [{backend_label}]...")
-                    window = webview.create_window(
-                        title="EXSCIO",
-                        url=APP_URL,
-                        width=1220,
-                        height=840,
-                        min_size=(540, 420),
-                        text_select=True,
-                        zoomable=True
-                    )
-                    window.events.closed += cleanup
+            backend_label = (gui_backend or "edgechromium").upper()
+            print(f"[OK] Открытие нативного окна EXSCIO [{backend_label}]...")
 
-                    def on_gui_ready():
-                        if gui_backend == "qt":
-                            try:
-                                from PyQt6.QtWidgets import QApplication
-                                app = QApplication.instance()
-                                if app:
-                                    app.setApplicationName("EXSCIO")
-                                    app.setDesktopFileName("exscio")
-                            except Exception:
-                                pass
-                        elif gui_backend == "gtk":
-                            try:
-                                from gi.repository import GLib
-                                GLib.set_prgname("exscio")
-                                GLib.set_application_name("EXSCIO")
-                            except Exception:
-                                pass
-                        notify_desktop("EXSCIO", "Автономный RAG готов к работе")
+            window = webview.create_window(
+                title="EXSCIO 2.0 — Корпоративный RAG",
+                url=APP_URL,
+                width=1240,
+                height=860,
+                min_size=(540, 420),
+                text_select=True,
+                zoomable=True
+            )
+            window.events.closed += cleanup
 
+            def on_gui_ready():
+                if sys.platform != "win32":
+                    if gui_backend == "qt":
+                        try:
+                            from PyQt6.QtWidgets import QApplication
+                            app = QApplication.instance()
+                            if app:
+                                app.setApplicationName("EXSCIO")
+                                app.setDesktopFileName("exscio")
+                        except Exception:
+                            pass
+                    elif gui_backend == "gtk":
+                        try:
+                            from gi.repository import GLib
+                            GLib.set_prgname("exscio")
+                            GLib.set_application_name("EXSCIO")
+                        except Exception:
+                            pass
+                notify_desktop("EXSCIO 2.0", "Автономный RAG готов к работе")
+
+            try:
+                if sys.platform == "win32":
+                    try:
+                        webview.start(func=on_gui_ready, gui="edgechromium", icon=icon_path)
+                    except Exception as e_edge:
+                        print(f"[!] Сбой Edge WebView2 ({e_edge}), переключение на WinForms...")
+                        webview.start(func=on_gui_ready, gui="winforms", icon=icon_path)
+                else:
                     webview.start(func=on_gui_ready, gui=gui_backend, icon=icon_path)
-                except Exception as e:
-                    run_browser_fallback(f"Сбой графического движка окна ({e}).")
+            except Exception as e:
+                run_browser_fallback(f"Сбой графического движка окна ({e}).")
     finally:
         cleanup()
 

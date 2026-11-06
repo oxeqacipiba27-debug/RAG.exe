@@ -1,29 +1,34 @@
 """
-switch_backend.py — Утилита переключения активного бэкенда RAG:
+switch_backend.py — Кроссплатформенная утилита переключения активного бэкенда EXSCIO (Windows / Linux):
 Поддерживает профили:
   1. lmstudio (порт 1234)
   2. ollama   (порт 11434)
   3. docker   (порт 11434 через контейнер)
+  4. rtx4070  (порт 8000 / 1234 через LAN / Tailscale)
 
 Использование:
   python switch_backend.py lmstudio
   python switch_backend.py ollama
   python switch_backend.py docker
+  python switch_backend.py rtx4070
   или без аргументов — интерактивное меню.
 """
 
+from __future__ import annotations
+
 import sys
 import os
-import shutil
-from pathlib import Path
 
-# UTF-8 вывод для Windows консоли
+# Безопасная настройка кодировки консоли Windows (Правило 5 GEMINI.md)
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+import shutil
+from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 ENV_FILE = ROOT_DIR / ".env"
@@ -40,8 +45,8 @@ PROFILE_NAMES = {
     "lmstudio": "LM Studio (http://localhost:1234/v1)",
     "ollama": "Ollama Native (http://localhost:11434/v1)",
     "docker": "Docker Ollama Container (http://localhost:11434/v1)",
-    "rtx4070": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000)",
-    "remote": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000)"
+    "rtx4070": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000/:1234)",
+    "remote": "Remote RTX 4070 PC (Tailscale / LAN / Cloudflare :8000/:1234)"
 }
 
 
@@ -51,7 +56,7 @@ def get_current_backend() -> str:
     with open(ENV_FILE, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             if line.strip().startswith("LLM_PROVIDER="):
-                prov = line.strip().split("=")[1]
+                prov = line.strip().split("=")[1].strip()
                 if prov == "LM_STUDIO":
                     return "LM Studio"
                 elif prov == "OLLAMA_LOCAL":
@@ -59,24 +64,24 @@ def get_current_backend() -> str:
                 elif prov == "DOCKER":
                     return "Docker Container"
                 elif prov in ("RTX4070_REMOTE", "REMOTE_PC"):
-                    return "Remote RTX 4070 (ПК)"
+                    return "Remote RTX 4070 PC"
                 return prov
-    return "Неизвестен"
+    return "Неизвестный бэкенд"
 
 
 def switch_to(profile_key: str) -> bool:
     key = profile_key.lower().strip()
     if key not in PROFILES:
-        print(f"❌ Неизвестный профиль: '{profile_key}'. Доступны: rtx4070, lmstudio, ollama, docker")
+        print(f"[X] Неизвестный профиль: '{profile_key}'. Доступны: lmstudio, ollama, docker, rtx4070")
         return False
 
     source_path = PROFILES[key]
     if not source_path.exists():
-        print(f"❌ Файл профиля {source_path.name} не найден!")
+        print(f"[X] Файл конфигурации {source_path.name} не найден!")
         return False
 
     shutil.copyfile(source_path, ENV_FILE)
-    print(f"\n[OK] Активный бэкенд успешно переключен на: {PROFILE_NAMES[key]}")
+    print(f"\n[OK] Успешно активирован бэкенд: {PROFILE_NAMES.get(key, key)}")
     print(f"     Конфигурация скопирована в {ENV_FILE.name}\n")
     return True
 
@@ -90,7 +95,7 @@ def interactive_menu():
     print("  [1] LM Studio             (http://localhost:1234/v1)")
     print("  [2] Ollama Native         (http://localhost:11434/v1)")
     print("  [3] Docker Container      (http://localhost:11434/v1)")
-    print("  [4] Remote RTX 4070 PC    (Tailscale / LAN / Cloudflare :8000)")
+    print("  [4] Remote RTX 4070 PC    (Tailscale / LAN / Cloudflare :8000/:1234)")
     print("  [5] Проверить доступность (test_backends.py)")
     print("  [6] Запустить RAG сейчас  (run_app.py)")
     print("  [0] Выход")
@@ -110,19 +115,23 @@ def interactive_menu():
     elif choice == "4":
         switch_to("rtx4070")
     elif choice == "5":
-        from test_backends import test_lm_studio, test_ollama_native, test_docker, test_rtx4070_remote
-        test_lm_studio()
-        test_ollama_native()
-        test_docker()
-        test_rtx4070_remote()
+        try:
+            from test_backends import test_lm_studio, test_ollama_native, test_docker, test_rtx4070_remote
+            test_lm_studio()
+            test_ollama_native()
+            test_docker()
+            test_rtx4070_remote()
+        except Exception as e:
+            print(f"[!] Сбой запуска тестов бэкендов: {e}")
     elif choice == "6":
         import subprocess
         print("\n[i] Запуск приложения EXSCIO...")
-        subprocess.run([sys.executable, str(ROOT_DIR / "run_app.py")])
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        subprocess.run([sys.executable, str(ROOT_DIR / "run_app.py")], creationflags=creationflags)
     elif choice == "0":
         print("Отмена.")
     else:
-        print("Неверный выбор.")
+        print("[!] Неверный выбор.")
 
 
 if __name__ == "__main__":

@@ -1,17 +1,27 @@
 """
-server_manager.py — Модуль автономного управления локальными бэкендами EXSCIO.
-Адаптирован для Arch Linux и POSIX систем с поддержкой:
-- LM Studio CLI (lms) на Linux и Windows
-- Ollama (/usr/bin/ollama, systemd ollama.service, CLI serve)
-- Linux GPU проверок (nvidia-smi, rocm-smi, PyTorch fallback, lspci)
-- Docker Compose управления
-- Автоматического контроля памяти GPU (-c 8192, unload)
+server_manager.py — Кроссплатформенный модуль автономного управления бэкендами EXSCIO (Windows / Linux).
+Поддерживает:
+- LM Studio CLI (lms / lms.exe) с автоуправлением памятью GPU (-c 8192, unload)
+- Ollama (ollama / ollama.exe, systemd на Linux, sc/tasklist на Windows)
+- Docker Desktop / Compose с проверкой подсистемы WSL2 (wsl -l -q) на Windows
+- Комплексную диагностику GPU (nvidia-smi, WMI Win32_VideoController, lspci, rocm-smi, PyTorch)
+- Двухпротокольный опрос удаленного сервера инференса (/health + fallback на /v1/models)
+- Динамическое переключение бэкендов в реальном времени
 """
 
 from __future__ import annotations
 
 import os
 import sys
+
+# Безопасная настройка кодировки консоли во избежание UnicodeEncodeError на Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
+
 import shutil
 import subprocess
 import time
@@ -58,6 +68,7 @@ __all__ = [
     "start_ollama_server",
     "ensure_ollama_stack",
     "get_docker_cli_path",
+    "is_wsl2_available",
     "start_docker_compose",
     "stop_docker_compose",
     "check_linux_gpu",
@@ -97,8 +108,16 @@ def get_gpu_info() -> Dict[str, Any]:
         "method": "none"
     }
 
-    # 1. Проверка NVIDIA GPU через nvidia-smi
+    # 1. Проверка NVIDIA GPU через nvidia-smi (включая стандартные пути Windows)
     nvidia_bin = shutil.which("nvidia-smi") or shutil.which("nvidia-smi.exe")
+    if not nvidia_bin and sys.platform == "win32":
+        for win_cand in [
+            r"C:\Windows\System32\nvidia-smi.exe",
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+        ]:
+            if Path(win_cand).exists():
+                nvidia_bin = win_cand
+                break
     if nvidia_bin:
         try:
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -198,8 +217,41 @@ def get_gpu_info() -> Dict[str, Any]:
     except Exception:
         pass
 
-    # 4. Fallback: проверка lspci на Linux для индикации физического наличия ускорителя
-    if sys.platform != "win32" and shutil.which("lspci"):
+    # 4. Fallback: проверка видеоконтроллеров через PowerShell / WMI на Windows или lspci на Linux
+    if sys.platform == "win32":
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            ps_cmd = "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                creationflags=creationflags
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+                gpu_lines = [l for l in lines if any(k in l.lower() for k in ["nvidia", "amd", "radeon", "intel", "geforce", "rtx"])]
+                if gpu_lines:
+                    first = gpu_lines[0]
+                    v = "NVIDIA" if any(x in first.lower() for x in ["nvidia", "geforce", "rtx"]) else ("AMD" if any(x in first.lower() for x in ["amd", "radeon"]) else "INTEL")
+                    result["has_gpu"] = True
+                    result["vendor"] = v
+                    result["gpus"] = [{
+                        "index": 0,
+                        "name": first,
+                        "total_memory_mb": None,
+                        "free_memory_mb": None,
+                        "used_memory_mb": None,
+                        "driver_version": "N/A (Win32_VideoController)",
+                        "vendor": v
+                    }]
+                    result["raw_output"] = "\n".join(gpu_lines)
+                    result["method"] = "powershell_wmi"
+                    return result
+        except Exception:
+            pass
+    elif shutil.which("lspci"):
         try:
             proc = subprocess.run(["lspci"], capture_output=True, text=True, timeout=3)
             if proc.returncode == 0:
@@ -263,21 +315,28 @@ def get_gpu_summary() -> str:
 # ==============================================================================
 
 def get_lms_cli_path() -> Optional[str]:
-    """Находит исполняемый файл lms CLI на Arch Linux или Windows."""
+    """Находит исполняемый файл lms CLI на Windows 10/11 или Linux."""
     # 1. Проверка переменной окружения LM_STUDIO_CLI
     env_cli = os.getenv("LM_STUDIO_CLI")
     if env_cli and Path(env_cli).exists():
         return env_cli
 
     # 2. Проверка PATH
-    found = shutil.which("lms") or shutil.which("lms.exe")
+    found = shutil.which("lms.exe") or shutil.which("lms")
     if found:
         return found
 
-    # 3. Стандартные пути установки LM Studio CLI на Linux (Arch) и Windows
+    # 3. Стандартные пути установки LM Studio CLI
     home = Path(os.path.expanduser("~"))
     candidates = [
-        # Linux Arch / AUR / Flatpak / AppImage standard paths
+        # Windows standard paths
+        home / ".lmstudio" / "bin" / "lms.exe",
+        Path(os.path.expandvars(r"%USERPROFILE%\.lmstudio\bin\lms.exe")),
+        Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\LM Studio\resources\app\.webpack\main\index.js")),
+        Path(r"C:\Program Files\LM Studio\resources\app\.webpack\main\index.js"),
+        Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\lms\bin\lms.exe")),
+        Path(os.path.expandvars(r"%PROGRAMFILES%\LM Studio\lms.exe")),
+        # Linux fallback paths
         home / ".var" / "app" / "ai.lmstudio.lm-studio" / ".lmstudio" / "bin" / "lms",
         home / ".lmstudio" / "bin" / "lms",
         home / ".local" / "bin" / "lms",
@@ -286,10 +345,6 @@ def get_lms_cli_path() -> Optional[str]:
         Path("/usr/bin/lms"),
         Path("/opt/LM-Studio/lms"),
         Path("/opt/lmstudio/bin/lms"),
-        # Windows standard paths
-        home / ".lmstudio" / "bin" / "lms.exe",
-        Path("C:/Program Files/LM Studio/resources/app/.webpack/main/index.js"),
-        Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\LM Studio\resources\app\.webpack\main\index.js")),
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -368,7 +423,7 @@ def get_loaded_models(base_url: str = DEFAULT_BASE_URL, timeout: float = 2.0) ->
     except Exception:
         pass
 
-    # Fallback на стандартный /v1/models для удаленного LM Studio
+    # Fallback на /v1/models для LM Studio
     try:
         with httpx.Client(timeout=timeout, trust_env=False) as client:
             v1_url = f"{norm_url}/models" if norm_url.endswith("/v1") else f"{norm_url}/v1/models"
@@ -576,21 +631,24 @@ def stop_local_server() -> Tuple[bool, str]:
 # ==============================================================================
 
 def get_ollama_cli_path() -> Optional[str]:
-    """Находит исполняемый файл ollama на Arch Linux или Windows."""
+    """Находит исполняемый файл ollama на Windows 10/11 или Linux."""
     # 1. Проверка PATH
-    found = shutil.which("ollama") or shutil.which("ollama.exe")
+    found = shutil.which("ollama.exe") or shutil.which("ollama")
     if found:
         return found
 
-    # 2. Стандартные пути установки на Arch Linux и Windows
+    # 2. Стандартные пути установки на Windows и Linux
     home = Path(os.path.expanduser("~"))
     candidates = [
-        Path("/usr/bin/ollama"),        # Arch Linux pacman пакет ollama / extra
-        Path("/usr/local/bin/ollama"),
-        home / ".local" / "bin" / "ollama",
+        # Windows standard paths
         Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")),
         Path(r"C:\Program Files\Ollama\ollama.exe"),
-        Path(r"C:\Program Files\Ollama\ollama app.exe")
+        Path(r"C:\Program Files\Ollama\ollama app.exe"),
+        Path(os.path.expandvars(r"%PROGRAMFILES%\Ollama\ollama.exe")),
+        # Linux fallback paths
+        Path("/usr/bin/ollama"),
+        Path("/usr/local/bin/ollama"),
+        home / ".local" / "bin" / "ollama",
     ]
     for c in candidates:
         if c.exists():
@@ -618,9 +676,20 @@ def is_ollama_online(url: str = "http://127.0.0.1:11434/v1", timeout: float = 0.
 
 def is_ollama_service_active() -> bool:
     """
-    Проверяет статус службы ollama в systemd (системной или пользовательской).
-    Актуально для Arch Linux при установке пакета ollama.
+    Проверяет статус службы ollama.
+    На Windows проверяет процесс ollama.exe / ollama app.exe.
+    На Linux проверяет systemd.
     """
+    if sys.platform == "win32":
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ollama.exe"], capture_output=True, text=True, timeout=3, creationflags=creationflags)
+            if "ollama.exe" in res.stdout:
+                return True
+        except Exception:
+            pass
+        return is_ollama_online()
+
     if shutil.which("systemctl"):
         try:
             res = subprocess.run(["systemctl", "is-active", "--quiet", "ollama"], capture_output=True, timeout=2)
@@ -661,8 +730,8 @@ def get_ollama_loaded_models(base_url: str = "http://127.0.0.1:11434/v1") -> Lis
 def start_ollama_server() -> Tuple[bool, str]:
     """
     Запускает локальную службу Ollama.
-    На Arch Linux приоритет отдается системной/пользовательской службе systemd.
-    При недоступности systemd выполняется прямой запуск демона `ollama serve`.
+    На Windows выполняет прямой запуск процесса `ollama serve`.
+    На Linux проверяет системную/пользовательскую службу systemd.
     """
     if is_ollama_online():
         return True, "Служба Ollama уже активна и принимает запросы."
@@ -690,6 +759,8 @@ def start_ollama_server() -> Tuple[bool, str]:
     # 2. Прямой запуск процесса бинарника ollama
     ollama_bin = get_ollama_cli_path()
     if not ollama_bin:
+        if sys.platform == "win32":
+            return False, "Утилита ollama не найдена. Установите Ollama для Windows с https://ollama.com"
         return False, "Утилита ollama не найдена. На Arch Linux выполните: sudo pacman -S ollama"
 
     try:
@@ -768,17 +839,41 @@ def ensure_ollama_stack(
 
 
 # ==============================================================================
-# DOCKER COMPOSE СТЕК (ARCH LINUX / POSIX)
+# DOCKER COMPOSE СТЕК & WSL2 (WINDOWS 10/11 / POSIX)
 # ==============================================================================
+
+def is_wsl2_available() -> Tuple[bool, str]:
+    """
+    Проверяет доступность подсистемы WSL2 на Windows (wsl -l -q).
+    В соответствии с правилом 4 GEMINI.md предотвращает долгое зависание Docker на Windows.
+    """
+    if sys.platform != "win32":
+        return True, "WSL2 не требуется на не-Windows системах."
+
+    wsl_bin = shutil.which("wsl.exe") or shutil.which("wsl")
+    if not wsl_bin:
+        return False, "Утилита wsl не найдена. Установите WSL2 через 'wsl --install'"
+
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run([wsl_bin, "-l", "-q"], capture_output=True, timeout=5, creationflags=creationflags)
+        if res.returncode == 0:
+            return True, "Подсистема WSL2 активна."
+        return False, "Подсистема WSL2 не настроена или отсутствуют дистрибутивы. Выполните: wsl --install"
+    except Exception as e:
+        return False, f"Ошибка проверки WSL2: {e}"
+
 
 def get_docker_cli_path() -> Optional[str]:
     """Находит исполняемый файл docker в системе."""
     candidates = [
+        "docker.exe",
         "docker",
+        r"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
+        os.path.expandvars(r"%PROGRAMFILES%\Docker\Docker\resources\bin\docker.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin\docker.exe"),
         "/usr/bin/docker",
         "/usr/local/bin/docker",
-        r"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin\docker.exe")
     ]
     for c in candidates:
         found = shutil.which(c) or (c if Path(c).exists() else None)
@@ -791,10 +886,17 @@ def start_docker_compose() -> Tuple[bool, str]:
     """Запускает контейнеры через docker compose up -d."""
     docker_bin = get_docker_cli_path()
     if not docker_bin:
+        if sys.platform == "win32":
+            return False, "Docker CLI (docker.exe) не найден. Установите Docker Desktop для Windows."
         return False, "Docker CLI не найден. На Arch Linux установите: sudo pacman -S docker docker-compose"
 
-    # Проверка демона docker на Arch Linux
-    if sys.platform != "win32" and shutil.which("systemctl"):
+    # Проверка WSL2 на Windows (Правило 4 GEMINI.md)
+    if sys.platform == "win32":
+        wsl_ok, wsl_msg = is_wsl2_available()
+        if not wsl_ok:
+            return False, f"[!] WSL2 недоступна: {wsl_msg}. Для работы Docker Desktop на Windows требуется WSL2."
+    elif shutil.which("systemctl"):
+        # Проверка демона docker на Arch Linux
         try:
             res = subprocess.run(["systemctl", "is-active", "--quiet", "docker"], capture_output=True, timeout=2)
             if res.returncode != 0:
@@ -860,8 +962,18 @@ def get_llm_remote_config() -> Dict[str, str]:
         "launcher": "rofi -dmenu -i -p 'RTX 4070'"
     }
 
-    env_path = Path.home() / ".config" / "llm-remote" / "config.env"
-    if env_path.exists():
+    candidates = [
+        Path(os.path.expandvars(r"%APPDATA%\llm-remote\config.env")),
+        Path.home() / ".config" / "llm-remote" / "config.env",
+        Path.home() / "llm-remote" / "config.env",
+    ]
+    env_path = None
+    for c in candidates:
+        if c.exists():
+            env_path = c
+            break
+
+    if env_path and env_path.exists():
         try:
             with open(env_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -1194,12 +1306,14 @@ def start_rtx4070_mock() -> Tuple[bool, str]:
         return False, "Скрипт mock_pc_server.py не найден."
 
     try:
-        subprocess.Popen(
-            [sys.executable, str(mock_script)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        popen_kwargs: Dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = creationflags
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        subprocess.Popen([sys.executable, str(mock_script)], **popen_kwargs)
         for _ in range(15):
             time.sleep(0.2)
             if is_rtx4070_online("127.0.0.1", 8000, timeout=0.3, force=True):
@@ -1278,7 +1392,8 @@ def save_rtx4070_settings(endpoint: str, port: int = 8000, api_key: str = "", de
                     new_cfg.append(cl)
             with open(global_cfg, "w", encoding="utf-8") as f:
                 f.writelines(new_cfg)
-            subprocess.run(["pkill", "-RTMIN+9", "waybar"], capture_output=True)
+            if sys.platform != "win32":
+                subprocess.run(["pkill", "-RTMIN+9", "waybar"], capture_output=True)
         except Exception:
             pass
 

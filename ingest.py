@@ -4,18 +4,17 @@ ingest.py — Промышленный CLI-скрипт индексации б�
 """
 from __future__ import annotations
 
-import os
 import sys
-import logging
-from pathlib import Path
-
-# Настройка UTF-8 для консоли Windows
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+import os
+import logging
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +36,7 @@ def run_ingestion(data_dir: str = "data", output_file: str = "rag_index.json"):
     Запуск индексации директории документов с гарантией размерности 768-D.
     """
     print("=" * 70)
-    print(" 🚀 EXSCIO 2.0 — Индексация документов (Nomic v1.5 strictly 768-D)")
+    print(" [*] EXSCIO 2.0 — Индексация документов (Nomic v1.5 strictly 768-D)")
     print("=" * 70)
 
     config = AppConfig.from_env()
@@ -55,14 +54,14 @@ def run_ingestion(data_dir: str = "data", output_file: str = "rag_index.json"):
     try:
         count = pipeline.index_directory(config.data_dir, output_file=config.index_file)
         print("-" * 70)
-        print(f"✅ [SUCCESS] Индексация завершена успешно! Всего чанков в индексе: {count}")
+        print(f"[OK] [SUCCESS] Индексация завершена успешно! Всего чанков в индексе: {count}")
         print(f"[*] Файл индекса сохранен: {config.index_file}")
         return count
     except EmbeddingDimensionMismatchError as dim_err:
-        logger.critical(f"❌ [CRITICAL DIMENSION ERROR] {dim_err}")
+        logger.critical(f"[X] [CRITICAL DIMENSION ERROR] {dim_err}")
         sys.exit(1)
     except Exception as exc:
-        logger.exception(f"❌ [ERROR] Ошибка в процессе индексации: {exc}")
+        logger.exception(f"[X] [ERROR] Ошибка в процессе индексации: {exc}")
         sys.exit(1)
 
 
